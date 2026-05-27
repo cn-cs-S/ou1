@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OKX AI Trade Desk</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="trade-app">
+      <header class="topbar">
+        <div class="brand">
+          <strong>AI Trade Desk</strong>
+          <span>OKX 模拟盘</span>
+        </div>
+        <nav class="pair-tabs" id="pairTabs">
+          <button class="active" data-symbol="BTC-USDT">BTCUSDT</button>
+          <button data-symbol="ETH-USDT">ETHUSDT</button>
+          <button data-symbol="SOL-USDT">SOLUSDT</button>
+          <button data-symbol="OKB-USDT">OKBUSDT</button>
+        </nav>
+        <div class="status-row">
+          <span class="status-pill" id="simStatus">检查中</span>
+          <span class="status-pill" id="keyStatus">密钥状态</span>
+          <span class="status-pill" id="skillStatus">Skills 检查中</span>
+          <span class="status-pill live" id="liveStatus">实时未启动</span>
+        </div>
+      </header>
+
+      <main class="terminal-grid">
+        <section class="chart-panel">
+          <div class="chart-head">
+            <div>
+              <h1 id="instrumentTitle">BTC/USDT</h1>
+              <p id="instrumentMeta">OKX · 30分 · 技术指标</p>
+            </div>
+            <div class="quote-box">
+              <strong id="lastPrice">--</strong>
+              <span id="priceChange">--</span>
+            </div>
+            <div class="chart-tools">
+              <div class="timeframes" id="timeframes">
+                <button data-bar="1m">1分</button>
+                <button data-bar="5m">5分</button>
+                <button data-bar="15m">15分</button>
+                <button class="active" data-bar="30m">30分</button>
+                <button data-bar="1H">1小时</button>
+                <button data-bar="4H">4小时</button>
+                <button data-bar="1D">1天</button>
+              </div>
+              <button id="toggleChartBtn" class="icon-button">收起K线</button>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="klineCanvas" width="1100" height="560"></canvas>
+            <div id="chartTooltip" class="chart-tooltip" hidden></div>
+          </div>
+          <div class="indicator-strip">
+            <span id="maLabel">MA --</span>
+            <span id="bbLabel">BOLL --</span>
+            <span id="rsiLabel">RSI --</span>
+            <span id="macdLabel">MACD --</span>
+          </div>
+          <div class="ohlc-strip">
+            <span id="ohlcNow">开 -- 高 -- 低 -- 收 --</span>
+            <span id="rangeStats">最高 -- · 最低 --</span>
+            <span id="updatedAt">--</span>
+          </div>
+          <div class="timing-strip">
+            <span id="timingSignal" class="signal neutral">等待实时入场判断</span>
+            <strong id="timingText">K 线加载后给出入场/离场建议</strong>
+          </div>
+        </section>
+
+        <section class="selector-panel">
+          <div class="panel-title">
+            <h2>市场</h2>
+            <div class="title-actions">
+              <span id="universeCount" class="muted">等待扫描</span>
+              <button id="refreshBtn" class="icon-button">刷新</button>
+            </div>
+          </div>
+          <div class="market-search">
+            <input id="marketSearchInput" placeholder="搜索或添加币种，如 BTC / BTC-USDT">
+            <button id="addSymbolBtn" class="secondary">添加</button>
+          </div>
+          <div class="selector-tabs" id="universeModeGroup">
+            <button class="active" data-mode="all">全部</button>
+            <button data-mode="recommended">AI推荐</button>
+            <button data-mode="rising">上涨</button>
+            <button data-mode="liquid">高流动</button>
+            <button data-mode="selected">已选</button>
+          </div>
+          <div class="watch-table market-quick" id="watchTable"></div>
+          <div class="market-focus">
+            <div class="selected-row">
+              <span>已选</span>
+              <div id="selectedSymbols" class="selected-symbols"></div>
+            </div>
+            <div id="marketDetail" class="market-detail">
+              <div class="empty-state">点击币种查看详情</div>
+            </div>
+          </div>
+          <div class="selector-controls">
+            <label>
+              <span>市场</span>
+              <select id="universeType">
+                <option value="SPOT">现货 USDT</option>
+                <option value="SWAP">永续 USDT</option>
+              </select>
+            </label>
+            <label>
+              <span>筛选</span>
+              <select id="universeRiskFilter">
+                <option value="all">全部</option>
+                <option value="mainstream">主流</option>
+                <option value="noHighVol">排除高波动</option>
+                <option value="newOnly">只看新币</option>
+              </select>
+            </label>
+            <label>
+              <span>最少上市天数</span>
+              <input id="minAgeInput" type="number" min="0" max="3650" value="30">
+            </label>
+            <label class="switch-row compact">
+              <span>不做新币</span>
+              <input id="excludeNewInput" type="checkbox" checked>
+            </label>
+            <button id="scanUniverseBtn" class="secondary">AI 扫描</button>
+          </div>
+          <div id="universeList" class="universe-list"></div>
+        </section>
+
+        <aside class="watch-panel">
+          <div class="panel-title">
+            <h2>资产 / 当前持仓</h2>
+            <span id="positionCount" class="muted">0</span>
+          </div>
+          <div class="asset-card">
+            <div>
+              <strong id="sideSymbol">BTCUSDT</strong>
+              <span id="sideName">BTC/USDT</span>
+            </div>
+            <div class="side-price">
+              <strong id="sidePrice">--</strong>
+              <span id="sideChange">--</span>
+            </div>
+          </div>
+          <div class="account-stack">
+            <article>
+              <span>总权益 USD</span>
+              <strong id="accountTotal">--</strong>
+            </article>
+            <article>
+              <span>可用 USDT</span>
+              <strong id="availableUsdt">--</strong>
+            </article>
+            <article>
+              <span>浮动盈亏</span>
+              <strong id="floatingPnl">--</strong>
+            </article>
+            <article>
+              <span>保证金占用</span>
+              <strong id="marginUsage">--</strong>
+            </article>
+          </div>
+          <div class="positions-box">
+            <div class="panel-title tight">
+              <h3>当前持仓</h3>
+              <button id="togglePositionsBtn" class="icon-button">收起</button>
+            </div>
+            <div id="positionsList" class="positions-list"></div>
+            <div id="hedgeNotice" class="hedge-notice">未检测到明显多空对冲。</div>
+          </div>
+        </aside>
+
+        <section class="indicator-panel">
+          <div class="panel-title">
+            <h2>技术指标</h2>
+            <span id="summaryAction" class="signal neutral">中立</span>
+          </div>
+          <div class="signal-grid">
+            <article>
+              <span>震荡指标</span>
+              <strong id="oscSignal">--</strong>
+              <small id="oscCounts">--</small>
+            </article>
+            <article>
+              <span>移动平均线</span>
+              <strong id="maSignal">--</strong>
+              <small id="maCounts">--</small>
+            </article>
+            <article>
+              <span>综合分数</span>
+              <strong id="signalScore">--</strong>
+              <small>0 卖出 · 100 买入</small>
+            </article>
+          </div>
+          <div class="tables-2">
+            <div>
+              <h3>震荡指标</h3>
+              <table>
+                <thead><tr><th>名称</th><th>值</th><th>操作</th></tr></thead>
+                <tbody id="oscTable"></tbody>
+              </table>
+            </div>
+            <div>
+              <h3>移动平均线</h3>
+              <table>
+                <thead><tr><th>名称</th><th>值</th><th>操作</th></tr></thead>
+                <tbody id="maTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="advice-panel">
+          <div class="panel-title">
+            <h2>AI 实时建议</h2>
+            <div class="automation-control">
+              <span id="automationBadge">自动化关闭</span>
+              <button id="automationToggleBtn" class="automation-toggle">开启自动化</button>
+            </div>
+          </div>
+          <div id="aiAdviceBox" class="ai-advice-box">
+            <div>
+              <span>当前判断</span>
+              <strong id="adviceAction">等待行情</strong>
+            </div>
+            <p id="adviceWhy">加载 K 线、账户和组合计划后，会给出资金配比、买入/卖出建议和判断原因。</p>
+            <div id="adviceMetrics" class="advice-metrics"></div>
+          </div>
+          <div id="positionAdvicePanel" class="position-advice-panel"></div>
+          <div class="opportunity-box">
+            <div class="panel-title tight">
+              <h3>全币种多空扫描</h3>
+              <span class="muted">自动刷新</span>
+            </div>
+            <div id="marketOpportunities" class="market-opportunities"></div>
+          </div>
+        </section>
+
+        <section class="strategy-panel">
+          <div class="panel-title">
+            <h2>AI 组合计划</h2>
+            <span id="generatedAt" class="muted">尚未生成</span>
+          </div>
+          <div class="compact-controls">
+            <label>
+              <span>预算 USDT</span>
+              <input id="budgetInput" type="number" min="0" step="50" value="1000">
+            </label>
+            <label>
+              <span>回看</span>
+              <input id="lookbackInput" type="number" min="30" max="300" step="10" value="90">
+            </label>
+            <label>
+              <span>风险 <b id="riskValue">5</b></span>
+              <input id="riskInput" type="range" min="1" max="10" value="5">
+            </label>
+            <label>
+              <span>目标收益率 %</span>
+              <input id="targetReturnInput" type="number" min="0.5" max="200" step="0.5" value="8">
+            </label>
+            <label>
+              <span>最大回撤 %</span>
+              <input id="maxDrawdownInput" type="number" min="0.5" max="80" step="0.5" value="3">
+            </label>
+          </div>
+          <div class="control-help" id="strategyHelp">均衡：在回撤控制和趋势收益之间折中；回看 90 天用于评估近期风险和相关性。</div>
+          <input id="symbolsInput" class="hidden-symbol-input" value="BTC-USDT, ETH-USDT, SOL-USDT, OKB-USDT" aria-label="symbols">
+          <div class="segmented" id="objectiveGroup">
+            <button data-value="defensive">防守</button>
+            <button data-value="balanced" class="active">均衡</button>
+            <button data-value="growth">进攻</button>
+          </div>
+          <button id="analyzeBtn" class="primary">生成组合</button>
+          <div class="plan-summary">
+            <article><span>首选</span><strong id="bestSymbol">--</strong><small id="bestReason">等待分析</small></article>
+            <article><span>置信度</span><strong id="confidenceMetric">--</strong><small id="confidenceLabel">--</small></article>
+            <article><span>现金</span><strong id="cashMetric">--</strong><small id="cashValue">--</small></article>
+          </div>
+          <div id="allocations" class="allocation-list"></div>
+          <div class="trade-ideas-panel">
+            <div class="panel-title tight">
+              <h3>AI 交易方向</h3>
+              <span class="muted">现货 / 合约 / 多空</span>
+            </div>
+            <div id="tradeIdeas" class="trade-ideas"></div>
+            <details class="trade-params">
+              <summary>当前币合约参数</summary>
+              <span id="contractStatus" class="muted trade-status">未生成</span>
+              <div class="contract-controls">
+                <label>
+                  <span>合约</span>
+                  <input id="contractInstInput" value="BTC-USDT-SWAP">
+                </label>
+                <label>
+                  <span>方向</span>
+                  <select id="contractSideInput">
+                    <option value="long">做多</option>
+                    <option value="short">做空</option>
+                  </select>
+                </label>
+                <label class="switch-row compact">
+                  <span>杠杆</span>
+                  <input id="leverageEnabledInput" type="checkbox" checked>
+                </label>
+                <label>
+                  <span>单笔风险 %</span>
+                  <input id="riskPctInput" type="number" min="0.1" max="10" step="0.1" value="1">
+                </label>
+                <label>
+                  <span>最大杠杆</span>
+                  <input id="maxLeverageInput" type="number" min="1" max="50" step="1" value="10">
+                </label>
+                <button id="contractPlanBtn" class="secondary">生成当前币计划</button>
+              </div>
+              <div id="contractPlan" class="contract-plan empty-state">等待生成合约计划</div>
+              <div id="tpSlBox" class="tp-sl-box empty-state">等待 AI 止盈止损</div>
+            </details>
+          </div>
+        </section>
+
+        <section class="execution-panel">
+          <div class="panel-title">
+            <h2>模拟盘执行</h2>
+            <span id="orderCount" class="muted">0 笔</span>
+          </div>
+          <div class="execution-controls">
+            <label class="switch-row">
+              <span>干跑</span>
+              <input id="dryRunInput" type="checkbox" checked>
+            </label>
+            <label>
+              <span>单笔上限</span>
+              <input id="maxOrderInput" type="number" min="1" step="10" value="500">
+            </label>
+          </div>
+          <div id="orders" class="order-list"></div>
+          <div class="button-row">
+            <button id="dryRunBtn" class="secondary">检查订单</button>
+            <button id="executeBtn" class="danger">提交模拟盘</button>
+          </div>
+          <div id="executionResult" class="execution-result" hidden></div>
+          <div class="notes-box">
+            <h3>风险提示</h3>
+            <ul id="notes"></ul>
+          </div>
+        </section>
+
+        <section class="skills-panel">
+          <div class="panel-title">
+            <h2>能力模块</h2>
+            <span id="skillsInstalled" class="muted">0 个已安装</span>
+          </div>
+          <div class="skill-kpis">
+            <article><span>依赖可用</span><strong id="skillsExecutable">0/0</strong></article>
+            <article><span>可写执行</span><strong id="skillsWrite">0</strong></article>
+            <article><span>自动化</span><strong id="autoStatus">关闭</strong></article>
+          </div>
+          <div id="skillsList" class="skills-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

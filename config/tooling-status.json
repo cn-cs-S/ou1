@@ -1,0 +1,30 @@
+{
+  "verifiedAt": "2026-05-23",
+  "dependencies": {
+    "Python": {
+      "ready": true,
+      "path": "C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "version": "3.12.10"
+    },
+    "ccxt": {
+      "ready": true,
+      "version": "4.5.54"
+    },
+    "Flask": {
+      "ready": true,
+      "version": "3.1.3"
+    },
+    "SQLite": {
+      "ready": true,
+      "source": "Python standard library"
+    },
+    "chainbase-cli": {
+      "ready": true,
+      "path": "%APPDATA%\\npm\\chainbase.cmd"
+    },
+    "OKX Trade Kit": {
+      "ready": true,
+      "source": "src/okx.js and installed @okx_ai CLI/MCP"
+    }
+  }
+}

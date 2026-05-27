@@ -1,0 +1,13 @@
+{
+  "name": "okx-ai-trade-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check src/okx.js && node --check src/optimizer.js && node --check src/autopilot.js && node --check src/skillsRegistry.js && node --check src/marketIndicators.js && node --check src/universe.js && node --check src/marketFlow.js && node --check src/contractRisk.js && node --check src/realValuation.js && node --check src/testAccount.js && node --check public/app.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

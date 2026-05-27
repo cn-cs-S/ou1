@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "skills": {
+    "kline-indicator": {
+      "source": "C:\\Users\\Administrator\\Desktop\\欧易\\marketplace-skills\\kline-indicator",
+      "sourceType": "local",
+      "computedHash": "c7a8341e6d99f18a35e16ba6933eacb1d7f6f8fe301c5d9dd2bebfc4e2ec6faa"
+    },
+    "market-intel": {
+      "source": "C:\\Users\\Administrator\\Desktop\\欧易\\marketplace-skills\\market-intel",
+      "sourceType": "local",
+      "computedHash": "a65f6c5daac922593c265d2a465a05918823f6dd8caa38b65fe0d9c1a1cda660"
+    },
+    "okx-execution-vortex": {
+      "source": "C:\\Users\\Administrator\\Desktop\\欧易\\marketplace-skills\\okx-execution-vortex",
+      "sourceType": "local",
+      "computedHash": "0ab6c4c82454860e730e30b6c95798c1a2a155781f39585614868a444162bacf"
+    },
+    "okx-maker-entry": {
+      "source": "C:\\Users\\Administrator\\Desktop\\欧易\\marketplace-skills\\okx-maker-entry",
+      "sourceType": "local",
+      "computedHash": "f6dfaeea989e6d064b870882ce9dffb8ed1e6b38b81edcde6f95886e8bc46c76"
+    },
+    "okx-review": {
+      "source": "C:\\Users\\Administrator\\Desktop\\欧易\\marketplace-skills\\okx-review",
+      "sourceType": "local",
+      "computedHash": "9ed4cec9a989843c592a44bef4af8ae207e88223fca668831ec7159c2fa0ba86"
+    },
+    "okx-strategy-oracle": {
+      "source": "C:\\Users\\Administrator\\Desktop\\欧易\\marketplace-skills\\okx-strategy-oracle",
+      "sourceType": "local",
+      "computedHash": "8f90301323423cb32e717cbc2b49b5c6a4803f2cc252b439fd3fb95d4707a587"
+    },
+    "position-sizer": {
+      "source": "C:\\Users\\Administrator\\Desktop\\欧易\\marketplace-skills\\position-sizer",
+      "sourceType": "local",
+      "computedHash": "ed46b2745828a051702b2906371b3d818904c8e422c3b8ff9815060752fe8a2f"
+    },
+    "recurring-dca": {
+      "source": "C:\\Users\\Administrator\\Desktop\\欧易\\marketplace-skills\\recurring-dca",
+      "sourceType": "local",
+      "computedHash": "8b8b06be2f7d82dd42390cb574d0b876483eb31bf7e1b7e221beaf568801bcba"
+    },
+    "trading-plan-generator": {
+      "source": "C:\\Users\\Administrator\\Desktop\\欧易\\marketplace-skills\\trading-plan-generator",
+      "sourceType": "local",
+      "computedHash": "2452203b4245ad4f7da0d24392a6c1c47af134cbd127d5b472a5c0d942a94606"
+    }
+  }
+}
