@@ -1,12 +1,14 @@
-# 环境与密钥
+# Environment and secrets
 .env
 .env.*
 !.env.example
 *.pem
 *.key
 **/api_keys.json
+**/*secret*.json
+**/*passphrase*.json
 
-# Node.js
+# Node.js dependencies and build output
 node_modules/
 ai/node_modules/
 ai/.next/
@@ -16,7 +18,7 @@ dist/
 dist-ssr/
 *.tsbuildinfo
 
-# Python
+# Python caches and virtual environments
 __pycache__/
 *.py[cod]
 *$py.class
@@ -28,24 +30,25 @@ env/
 .pytest_cache/
 .mypy_cache/
 
-# 本地数据与日志（含测试账户、复盘库）
+# Local trading data and logs
 data/
 logs/
 *.log
 *.sqlite
 *.db
+auto_trading_refactor/data/paper_trading/
 
-# 构建产物与安装包
+# Build artifacts and downloaded installers
 *.exe
 *.msi
 *.zip
 
-# 操作系统
+# OS files
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# IDE / AI 工具本地目录
+# Editors and local AI tooling
 .vscode/
 .idea/
 .adal/
@@ -89,12 +92,9 @@ Desktop.ini
 .zencoder/
 .vercel/
 
-# v0 / Next 沙箱
+# v0 / Next sandbox internals
 ai/__v0_runtime_loader.js
 ai/__v0_devtools.tsx
 ai/__v0_jsx-dev-runtime.ts
 ai/.snowflake/
 ai/.v0-trash/
-
-# 纸面交易运行时
-auto_trading_refactor/data/paper_trading/

@@ -8,7 +8,7 @@ export function createAutopilot({ runPlan, appendLog }) {
         timer: null,
         state: {
           enabled: false,
-          intervalSeconds: 15,
+          intervalSeconds: 30,
           executionMode: "analysis",
           dryRun: true,
           accountId: id,
@@ -30,7 +30,7 @@ export function createAutopilot({ runPlan, appendLog }) {
     stopTimer(record);
 
     state.enabled = Boolean(input.enabled);
-    state.intervalSeconds = clamp(Number(input.intervalSeconds || Number(input.intervalMinutes || 0) * 60 || 15), 15, 3600);
+    state.intervalSeconds = clamp(Number(input.intervalSeconds || Number(input.intervalMinutes || 0) * 60 || 30), 30, 3600);
     state.executionMode = ["analysis", "semi", "auto"].includes(input.executionMode) ? input.executionMode : "analysis";
     state.dryRun = input.dryRun !== false;
     state.settings = input.settings || {};

@@ -48,6 +48,12 @@ import {
   type PlanSettings,
 } from '@/lib/mock-data'
 
+const TERMINAL_REFRESH_MS = 30_000
+const CHART_REFRESH_MS = 10_000
+const FOCUSED_REFRESH_MS = 30_000
+const MARKET_ALERT_REFRESH_MS = 45_000
+const ACCOUNT_DIALOG_REFRESH_MS = 30_000
+
 export default function TradingTerminal() {
   const [assets, setAssets] = useState<CryptoAsset[]>([])
   const [selectedInstId, setSelectedInstId] = useState(initialAsset.instId)
@@ -263,10 +269,11 @@ export default function TradingTerminal() {
     }
     void boot()
     const timer = window.setInterval(() => {
+      if (document.hidden) return
       void refreshTerminal().catch((requestError) => {
         setSyncError(requestError instanceof Error ? requestError.message : '实时同步失败')
       })
-    }, 15000)
+    }, TERMINAL_REFRESH_MS)
     return () => {
       active = false
       window.clearInterval(timer)
@@ -298,7 +305,9 @@ export default function TradingTerminal() {
       }
     }
     void refreshChart()
-    const timer = window.setInterval(() => void refreshChart(), 5000)
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void refreshChart()
+    }, CHART_REFRESH_MS)
     return () => {
       active = false
       window.clearInterval(timer)
@@ -307,7 +316,9 @@ export default function TradingTerminal() {
 
   useEffect(() => {
     void refreshFocused()
-    const timer = window.setInterval(() => void refreshFocused(), 15000)
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void refreshFocused()
+    }, FOCUSED_REFRESH_MS)
     return () => {
       focusedRequestRef.current += 1
       window.clearInterval(timer)
@@ -317,14 +328,18 @@ export default function TradingTerminal() {
   useEffect(() => {
     if (!monitoredSwapAssets.length) return
     void scanMarketAlerts()
-    const timer = window.setInterval(() => void scanMarketAlerts(), 15000)
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void scanMarketAlerts()
+    }, MARKET_ALERT_REFRESH_MS)
     return () => window.clearInterval(timer)
   }, [monitoredSwapAssets.length, scanMarketAlerts])
 
   useEffect(() => {
     if (!accountDialogOpen) return
     void refreshAccountsOverview()
-    const timer = window.setInterval(() => void refreshAccountsOverview(), 15000)
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void refreshAccountsOverview()
+    }, ACCOUNT_DIALOG_REFRESH_MS)
     return () => window.clearInterval(timer)
   }, [accountDialogOpen, refreshAccountsOverview])
 
@@ -353,7 +368,7 @@ export default function TradingTerminal() {
       if (targetId === selectedAccountId && targetSource === selectedAccountSource) setAutomationState(nextState)
       if (accountDialogOpen) await refreshAccountsOverview()
       setNotice(enabled
-        ? `${targetAccount?.accountLabel || '所选测试账户'}已开启自动化接管：每 15 秒评估买入、卖出、做多、做空、加减仓或平仓`
+        ? `${targetAccount?.accountLabel || '所选测试账户'}已开启自动化接管：每 30 秒评估买入、卖出、做多、做空、加减仓或平仓`
         : `${targetAccount?.accountLabel || '所选测试账户'}自动化操作已关闭`)
     } catch (requestError) {
       setActionError(requestError instanceof Error ? requestError.message : '自动化设置失败')

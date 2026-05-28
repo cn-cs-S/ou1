@@ -36,6 +36,9 @@ function valuePosition(item, market) {
       bePx: avgPx,
       notionalUsd: liveMarkPx * units,
       margin: Number(item.capital || cost),
+      maintenanceMarginRatePct: 0,
+      maintenanceMarginRatioPct: 0,
+      maintenanceMarginUsd: 0,
       ctVal: 1,
       exchangeMarkPx,
       exchangeUpl,
@@ -78,6 +81,11 @@ function valuePosition(item, market) {
     : avgPx;
   const notionalUsd = markPx * units;
   const maintenanceRate = maintenanceMarginRate(item, notionalUsd);
+  const maintenanceMarginUsd = notionalUsd * maintenanceRate;
+  const exchangeMarginRatioPct = normalizeRatioPct(Number(item.mgnRatio || 0));
+  const maintenanceMarginRatioPct = exchangeMarginRatioPct || (maintenanceMarginUsd > 0
+    ? (initialMargin + upl) / maintenanceMarginUsd * 100
+    : 0);
   const liqPx = liquidationPrice(avgPx, lever, maintenanceRate, posSide);
 
   return {
@@ -89,6 +97,9 @@ function valuePosition(item, market) {
     bePx,
     notionalUsd,
     margin: initialMargin,
+    maintenanceMarginRatePct: maintenanceRate * 100,
+    maintenanceMarginRatioPct,
+    maintenanceMarginUsd,
     ctVal,
     exchangeMarkPx,
     exchangeUpl,
@@ -124,6 +135,8 @@ function basePosition(item) {
     liqPx: Number(item.liqPx || 0),
     bePx: Number(item.bePx || item.breakEvenPx || item.avgPx || 0),
     mgnMode: item.mgnMode || "",
+    mgnRatio: Number(item.mgnRatio || 0),
+    mmr: Number(item.mmr || 0),
     notionalUsd: Number(item.notionalUsd || item.notionalUsdForBorrow || 0),
     margin: Number(item.margin || item.imr || 0),
     capital: Number(item.capital || 0),
@@ -141,6 +154,11 @@ function maintenanceMarginRate(item, notionalUsd) {
     return clamp(rawMmr / notionalUsd, 0.0001, 0.2);
   }
   return DEFAULT_MMR_RATE;
+}
+
+function normalizeRatioPct(value) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.abs(value) <= 20 ? value * 100 : value;
 }
 
 function liquidationPrice(entry, leverage, maintenanceRate, side) {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { AlertCircle, ArrowRightLeft, Bot, BriefcaseBusiness, Play, Plus, RefreshCcw, ShieldCheck, Trash2, Wallet } from 'lucide-react'
+import { AlertCircle, ArrowRightLeft, Bot, BriefcaseBusiness, ExternalLink, Play, Plus, RefreshCcw, ShieldCheck, Trash2, Wallet } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -56,6 +56,7 @@ export function AccountOverviewDialog({
   const selected = accounts.find((entry) => entry.id === selectedAccountId && entry.source === selectedSource) || accounts[0]
   const selectedAutomation = automation?.accountId === selected?.id ? automation : selected?.automation || null
   const canUseAutomation = selected?.source === 'test'
+  const selectedDetailHref = `/accounts?accountId=${encodeURIComponent(selected?.id || selectedAccountId || 'default')}`
 
   function submitAccount() {
     if (!newLabel.trim() || newEquity <= 0) return
@@ -77,7 +78,13 @@ export function AccountOverviewDialog({
                 真实行情统一估值；每个测试账户可独立自动接管，真实账户保持只读。
               </DialogDescription>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button asChild size="sm" variant="outline" className="h-8 text-xs">
+                <a href={selectedDetailHref} target="_blank" rel="noreferrer">
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  详情页面
+                </a>
+              </Button>
               <Button size="sm" variant="outline" className="h-8 text-xs" disabled={actionPending} onClick={() => setShowCreate((current) => !current)}>
                 <Plus className="h-3.5 w-3.5" />
                 新增测试账户
@@ -114,7 +121,7 @@ export function AccountOverviewDialog({
                   <Bot className="h-4 w-4 text-primary" />
                   <div>
                     <p className="text-sm font-medium">自动化操作</p>
-                    <p className="text-[11px] text-muted-foreground">每 15 秒依据真实市场与 AI 策略评估，包含已有人工测试持仓的买卖、做多做空、加减仓和平仓。</p>
+                    <p className="text-[11px] text-muted-foreground">每 30 秒依据真实市场与 AI 策略评估，包含已有人工测试持仓的买卖、做多做空、加减仓和平仓。</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

@@ -17,15 +17,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 const envPath = path.join(__dirname, ".env");
+const auditLogPath = path.join(__dirname, "data", "audit-log.jsonl");
 
 loadEnv(envPath);
 
 const preferredPort = Number(process.env.PORT || 8787);
 let activePort = preferredPort;
 const okx = createOkxClient();
-const auditLog = [];
+const auditLog = readAuditLog(auditLogPath);
 const feeCache = new Map();
 const marketFlowCache = new Map();
+const ACCOUNTS_OVERVIEW_CACHE_MS = Number(process.env.ACCOUNTS_OVERVIEW_CACHE_MS || 8_000);
+let accountsOverviewCache = null;
+let accountsOverviewPending = null;
+let accountsOverviewCacheVersion = 0;
 const accountSource = process.env.OKX_ACCOUNT_SOURCE === "live-readonly" ? "live-readonly" : "test";
 const testAccounts = createTestAccountRegistry({
   defaultFilePath: path.join(__dirname, "data", "test-account.json"),
@@ -137,12 +142,35 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/accounts/detail") {
+    const overview = await buildAccountsOverview();
+    sendJson(res, 200, {
+      ok: true,
+      detail: {
+        ...overview,
+        operations: buildAccountOperations(overview.accounts)
+      }
+    });
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/test-accounts") {
     const body = await readJson(req);
     const descriptor = testAccounts.create({
       label: body.label,
       initialEquityUsdt: body.initialEquityUsdt
     });
+    appendLog({
+      level: "info",
+      event: "test_account_created",
+      message: `Created test account ${descriptor.label}.`,
+      meta: {
+        accountId: descriptor.id,
+        accountLabel: descriptor.label,
+        initialEquityUsdt: Number(body.initialEquityUsdt || 0)
+      }
+    });
+    invalidateAccountsOverviewCache();
     sendJson(res, 201, {
       ok: true,
       descriptor,
@@ -160,6 +188,13 @@ async function handleApi(req, res, url) {
     }
     testAccounts.remove(id);
     autopilot.remove(id);
+    invalidateAccountsOverviewCache();
+    appendLog({
+      level: "info",
+      event: "test_account_deleted",
+      message: `Deleted test account ${id}.`,
+      meta: { accountId: id }
+    });
     sendJson(res, 200, { ok: true, overview: await buildAccountsOverview() });
     return;
   }
@@ -168,6 +203,16 @@ async function handleApi(req, res, url) {
     const body = await readJson(req);
     const accountId = normalizeTestAccountId(body.accountId || "default");
     testAccounts.get(accountId).reset(Number(body.initialEquityUsdt || process.env.TEST_ACCOUNT_INITIAL_USDT || 100_000));
+    invalidateAccountsOverviewCache();
+    appendLog({
+      level: "info",
+      event: "test_account_reset",
+      message: `Reset test account ${accountId}.`,
+      meta: {
+        accountId,
+        initialEquityUsdt: Number(body.initialEquityUsdt || process.env.TEST_ACCOUNT_INITIAL_USDT || 100_000)
+      }
+    });
     sendJson(res, 200, { ok: true, account: await loadAccountSummary("test", accountId) });
     return;
   }
@@ -199,6 +244,29 @@ async function handleApi(req, res, url) {
       fundingRate: Number(fundingRate?.fundingRate || 0),
       instrument
     }, instrument);
+    appendLog({
+      level: "info",
+      event: "test_position_adjusted",
+      message: `Adjusted ${instId} on test account ${accountId}.`,
+      meta: {
+        source: "manual",
+        accountId,
+        results: [{
+          instId,
+          instType,
+          action: ["add", "reduce", "close"].includes(body.action) ? body.action : "add",
+          operation: automatedOperationLabel(
+            instType,
+            ["add", "reduce", "close"].includes(body.action) ? body.action : "add",
+            body.side === "short" ? "short" : "long"
+          ),
+          status: "applied-to-test-account",
+          reason: "Manual position adjustment",
+          adjustment
+        }]
+      }
+    });
+    invalidateAccountsOverviewCache();
     sendJson(res, 200, { ok: true, adjustment, account: await loadAccountSummary("test", accountId) });
     return;
   }
@@ -357,6 +425,7 @@ async function handleApi(req, res, url) {
     testAccounts.descriptor(targetAccountId);
     body.accountId = targetAccountId;
     const state = await autopilot.configure(body);
+    invalidateAccountsOverviewCache();
     sendJson(res, 200, { ok: true, autopilot: state });
     return;
   }
@@ -366,6 +435,7 @@ async function handleApi(req, res, url) {
     const targetAccountId = normalizeTestAccountId(body.accountId || "default");
     testAccounts.descriptor(targetAccountId);
     const result = await autopilot.runOnce("manual", targetAccountId);
+    invalidateAccountsOverviewCache();
     sendJson(res, 200, { ok: true, result, autopilot: autopilot.getState(targetAccountId) });
     return;
   }
@@ -633,7 +703,15 @@ async function executePlan(orders, options = {}) {
       instId: order.instId,
       instType: order.instType,
       side: order.side,
+      positionSide: order.positionSide,
+      action: order.action || (order.instType === "SWAP" ? "add" : order.side === "sell" ? "reduce" : "add"),
+      operation: automatedOperationLabel(
+        order.instType,
+        order.action || (order.instType === "SWAP" ? "add" : order.side === "sell" ? "reduce" : "add"),
+        order.positionSide
+      ),
       sz: order.sz,
+      notionalUsd: order.quoteValueUsdt,
       status: "applied-to-test-account",
       referencePrice: adjustment.referencePrice,
       executionFee: adjustment.executionFee,
@@ -647,8 +725,13 @@ async function executePlan(orders, options = {}) {
     level: "info",
     event: "test_positions_updated",
     message: `Applied ${results.length} changes to the local test account.`,
-    meta: { source }
+    meta: {
+      source,
+      accountId: normalizeTestAccountId(options.accountId || "default"),
+      results
+    }
   });
+  invalidateAccountsOverviewCache();
 
   return { dryRun: false, skipped: false, results };
 }
@@ -741,6 +824,7 @@ async function reconcileAutomatedTestAccount(plan, settings = {}, options = {}) 
       message: `Automation for ${accountId} is configured to manage existing positions only.`,
       meta: { accountId, dryRun, results }
     });
+    if (!dryRun) invalidateAccountsOverviewCache();
     return {
       dryRun,
       skipped: executedActions === 0,
@@ -805,6 +889,7 @@ async function reconcileAutomatedTestAccount(plan, settings = {}, options = {}) 
     message: `Automation evaluated ${accountId} and produced ${results.length} position actions.`,
     meta: { accountId, dryRun, results }
   });
+  if (!dryRun) invalidateAccountsOverviewCache();
   return {
     dryRun,
     skipped: executedActions === 0,
@@ -1030,7 +1115,30 @@ async function loadAccountSummary(source = accountSource, accountId = "default")
   return summarizeTestAccount(state, valuePositions(localTestAccount.positions(), markets), descriptor);
 }
 
-async function buildAccountsOverview() {
+async function buildAccountsOverview(options = {}) {
+  const force = Boolean(options.force);
+  const now = Date.now();
+  if (!force && accountsOverviewCache && now - accountsOverviewCache.at <= ACCOUNTS_OVERVIEW_CACHE_MS) {
+    return clonePayload(accountsOverviewCache.value);
+  }
+  if (!force && accountsOverviewPending) return clonePayload(await accountsOverviewPending);
+
+  const version = accountsOverviewCacheVersion;
+  accountsOverviewPending = buildAccountsOverviewFresh()
+    .then((overview) => {
+      if (version === accountsOverviewCacheVersion) {
+        accountsOverviewCache = { at: Date.now(), value: clonePayload(overview) };
+      }
+      return overview;
+    })
+    .finally(() => {
+      accountsOverviewPending = null;
+    });
+
+  return clonePayload(await accountsOverviewPending);
+}
+
+async function buildAccountsOverviewFresh() {
   const credentials = okx.credentialsStatus();
   const accounts = await Promise.all(testAccounts.list().map(async (descriptor) => ({
     id: descriptor.id,
@@ -1084,6 +1192,125 @@ async function buildAccountsOverview() {
   };
 }
 
+function invalidateAccountsOverviewCache() {
+  accountsOverviewCacheVersion += 1;
+  accountsOverviewCache = null;
+  accountsOverviewPending = null;
+}
+
+function clonePayload(value) {
+  return typeof structuredClone === "function"
+    ? structuredClone(value)
+    : JSON.parse(JSON.stringify(value));
+}
+
+function buildAccountOperations(accounts = []) {
+  const accountLabels = new Map(accounts.map((entry) => [entry.id, entry.label]));
+  const operations = [];
+
+  for (const [logIndex, entry] of auditLog.slice(-240).entries()) {
+    const meta = entry.meta || {};
+    const event = entry.event || "event";
+    const accountId = String(meta.accountId || "");
+    const rows = Array.isArray(meta.results) ? meta.results : [];
+
+    if (rows.length) {
+      rows.forEach((row, rowIndex) => {
+        operations.push(normalizeOperationRecord({
+          entry,
+          event,
+          meta,
+          row,
+          accountLabels,
+          index: `${logIndex}-${rowIndex}`
+        }));
+      });
+      continue;
+    }
+
+    if (!isAccountOperationEvent(event) && !accountId) continue;
+    operations.push(normalizeOperationRecord({
+      entry,
+      event,
+      meta,
+      row: null,
+      accountLabels,
+      index: `${logIndex}-event`
+    }));
+  }
+
+  return operations
+    .filter(Boolean)
+    .sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts))
+    .slice(0, 160);
+}
+
+function normalizeOperationRecord({ entry, event, meta, row, accountLabels, index }) {
+  const accountId = String(meta.accountId || row?.accountId || "");
+  const source = inferOperationSource(event, meta);
+  const action = row?.action || row?.side || "";
+  const operation = row?.operation || operationTextFromAction(row?.instType, action, row?.positionSide || row?.side);
+  const instId = row?.instId || row?.symbol || "";
+  const status = row?.status || (entry.level === "error" ? "failed" : "completed");
+  const reason = row?.reason || entry.message || "";
+  return {
+    id: `${entry.ts}-${event}-${index}-${instId || accountId || "system"}`,
+    ts: entry.ts,
+    accountId: accountId || "system",
+    accountLabel: accountLabels.get(accountId) || meta.accountLabel || (accountId === "live-readonly" ? "Live readonly" : accountId || "System"),
+    source,
+    ai: source === "ai",
+    event,
+    instId,
+    instType: row?.instType || "",
+    action,
+    operation,
+    status,
+    reason,
+    dryRun: Boolean(meta.dryRun || row?.status === "dry-run"),
+    referencePrice: numberOrNull(row?.referencePrice || row?.adjustment?.referencePrice),
+    notionalUsd: numberOrNull(row?.notionalUsd || row?.adjustment?.notionalUsd),
+    executionFee: numberOrNull(row?.executionFee || row?.adjustment?.executionFee),
+    realizedPnl: numberOrNull(row?.realizedPnl || row?.adjustment?.realizedPnl),
+    message: entry.message
+  };
+}
+
+function inferOperationSource(event, meta = {}) {
+  if (meta.source === "automation" || event.startsWith("automation_") || event.startsWith("autopilot_")) return "ai";
+  if (meta.source === "manual" || event === "test_position_adjusted" || event === "test_positions_updated") return "manual";
+  return "system";
+}
+
+function isAccountOperationEvent(event) {
+  return [
+    "autopilot_enabled",
+    "autopilot_disabled",
+    "autopilot_run",
+    "autopilot_failed",
+    "automation_existing_positions_only",
+    "automation_portfolio_reconciled",
+    "test_account_created",
+    "test_account_deleted",
+    "test_account_reset",
+    "test_position_adjusted",
+    "test_positions_updated"
+  ].includes(event);
+}
+
+function operationTextFromAction(instType, action, side) {
+  if (!action) return "";
+  if (["add", "reduce", "close"].includes(action)) return automatedOperationLabel(instType || "SPOT", action, side);
+  if (action === "buy") return instType === "SWAP" ? "Open long" : "Buy";
+  if (action === "sell") return instType === "SWAP" ? "Open short" : "Sell";
+  return action;
+}
+
+function numberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function ensureWritableTestAccount(source) {
   if (normalizeAccountSource(source) !== "test") {
     throw new Error("当前为真实账户只读模式，不能从界面修改持仓或应用组合计划。");
@@ -1091,12 +1318,37 @@ function ensureWritableTestAccount(source) {
 }
 
 async function fetchLiveValuationMarkets(instIds) {
-  const entries = await Promise.all(instIds.map(async (instId) => {
+  const uniqueInstIds = [...new Set((instIds || []).filter(Boolean).map((instId) => String(instId).toUpperCase()))];
+  if (!uniqueInstIds.length) return new Map();
+
+  const types = [...new Set(uniqueInstIds.map((instId) => String(instId || "").endsWith("-SWAP") ? "SWAP" : "SPOT"))];
+  const [tickerResults, instrumentResults] = await Promise.all([
+    Promise.all(types.map(async (instType) => {
+      try {
+        return [instType, await okx.getTickers(instType)];
+      } catch (error) {
+        appendLog({ level: "warn", event: "tickers_failed", message: `${instType}: ${error.message}` });
+        return [instType, []];
+      }
+    })),
+    Promise.all(types.map(async (instType) => {
+      try {
+        return [instType, await okx.getInstruments(instType)];
+      } catch (error) {
+        appendLog({ level: "warn", event: "instruments_failed", message: `${instType}: ${error.message}` });
+        return [instType, []];
+      }
+    }))
+  ]);
+  const tickerMap = new Map(tickerResults.flatMap(([, rows]) => rows.map((row) => [row.instId, row])));
+  const instrumentMap = new Map(instrumentResults.flatMap(([, rows]) => rows.map((row) => [row.instId, row])));
+
+  const entries = await Promise.all(uniqueInstIds.map(async (instId) => {
     const instType = String(instId || "").endsWith("-SWAP") ? "SWAP" : "SPOT";
     try {
-      const [ticker, instruments, mark, fundingRate] = await Promise.all([
-        okx.getTicker(instId),
-        okx.getInstruments(instType, instId),
+      const ticker = tickerMap.get(instId);
+      const instrument = instrumentMap.get(instId) || {};
+      const [mark, fundingRate] = await Promise.all([
         instType === "SWAP" ? okx.getMarkPrice(instId, instType).catch(() => null) : Promise.resolve(null),
         instType === "SWAP" ? okx.getFundingRate(instId).catch(() => null) : Promise.resolve(null)
       ]);
@@ -1108,7 +1360,7 @@ async function fetchLiveValuationMarkets(instIds) {
         lastPx,
         markPx,
         fundingRate: Number(fundingRate?.fundingRate || 0),
-        instrument: instruments[0] || {}
+        instrument
       }];
     } catch (error) {
       appendLog({
@@ -1214,6 +1466,10 @@ function enrichPosition(item) {
   const liqPx = Number(item.liqPx || 0);
   const posSide = normalizePosSide(item);
   const liqDistancePct = markPx > 0 && liqPx > 0 ? Math.abs(markPx - liqPx) / markPx * 100 : 0;
+  const notionalUsd = Number(item.notionalUsd || Math.abs(Number(item.pos || 0)) * markPx);
+  const maintenanceMarginUsd = Number(item.maintenanceMarginUsd || item.mmr || 0);
+  const maintenanceMarginRatePct = Number(item.maintenanceMarginRatePct || (notionalUsd > 0 ? maintenanceMarginUsd / notionalUsd * 100 : 0));
+  const maintenanceMarginRatioPct = Number(item.maintenanceMarginRatioPct || item.mgnRatio || 0);
   return {
     ...item,
     uplRatioPct: normalizeRatioPct(Number(item.uplRatio || 0)),
@@ -1231,7 +1487,12 @@ function enrichPosition(item) {
         : "待取得标记价",
     liqDistancePct: roundMoney(liqDistancePct),
     breakEvenGapPct: markPx > 0 && item.bePx > 0 ? roundMoney((markPx / item.bePx - 1) * 100) : 0,
-    notionalUsd: roundMoney(Number(item.notionalUsd || Math.abs(Number(item.pos || 0)) * markPx)),
+    notionalUsd: roundMoney(notionalUsd),
+    margin: roundMoney(Number(item.margin || item.capital || 0)),
+    marginMode: String(item.mgnMode || (item.instType === "SPOT" ? "cash" : "isolated")),
+    maintenanceMarginUsd: roundMoney(maintenanceMarginUsd || notionalUsd * maintenanceMarginRatePct / 100),
+    maintenanceMarginRatePct: roundMoney(maintenanceMarginRatePct),
+    maintenanceMarginRatioPct: roundMoney(maintenanceMarginRatioPct),
     advice: positionAdvice({ ...item, markPx, avgPx, liqPx, posSide, liqDistancePct })
   };
 }
@@ -1436,14 +1697,39 @@ function sendText(res, status, text) {
 }
 
 function appendLog(entry) {
-  auditLog.push({
+  const record = {
     ts: new Date().toISOString(),
     level: entry.level || "info",
     event: entry.event || "event",
     message: entry.message || "",
     meta: redact(entry.meta || {})
-  });
+  };
+  auditLog.push(record);
   if (auditLog.length > 500) auditLog.shift();
+  persistAuditLog(record);
+}
+
+function readAuditLog(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  try {
+    return fs.readFileSync(filePath, "utf8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry && typeof entry === "object" && entry.ts)
+      .slice(-500);
+  } catch {
+    return [];
+  }
+}
+
+function persistAuditLog(record) {
+  try {
+    fs.mkdirSync(path.dirname(auditLogPath), { recursive: true });
+    fs.appendFileSync(auditLogPath, `${JSON.stringify(record)}\n`, "utf8");
+  } catch (error) {
+    console.warn(`Unable to persist audit log: ${error.message}`);
+  }
 }
 
 function safeError(error) {

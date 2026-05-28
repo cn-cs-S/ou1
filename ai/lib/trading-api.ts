@@ -1,5 +1,6 @@
 import type {
   AccountSummary,
+  AccountDetailSnapshot,
   AccountsOverview,
   AccountSource,
   AIPlan,
@@ -255,6 +256,18 @@ export async function fetchAccountsOverview(): Promise<AccountsOverview> {
   }
 }
 
+export async function fetchAccountDetails(): Promise<AccountDetailSnapshot> {
+  const data = await request<{ detail: RawAccountDetail }>('/accounts/detail')
+  return {
+    ...data.detail,
+    accounts: data.detail.accounts.map((entry) => ({
+      ...entry,
+      account: entry.account ? mapAccount(entry.account) : undefined,
+    })),
+    operations: data.detail.operations || [],
+  }
+}
+
 export async function fetchAutomation(accountId = 'default'): Promise<AutomationState> {
   const data = await request<{ autopilot: AutomationState }>(`/autopilot?accountId=${encodeURIComponent(accountId)}`)
   return data.autopilot
@@ -271,6 +284,15 @@ type RawAccountSummary = Omit<AccountSummary, 'positions'> & {
     upl: number
     uplRatioPct: number
     lever: number
+    notionalUsd?: number
+    margin?: number
+    marginMode?: string
+    mgnMode?: string
+    maintenanceMarginRatePct?: number
+    maintenanceMarginRatioPct?: number
+    maintenanceMarginUsd?: number
+    fundingFee?: number
+    fundingRate?: number
     liqPx: number
     bePx: number
     advice: string
@@ -286,6 +308,10 @@ type RawAccountsOverview = Omit<AccountsOverview, 'accounts'> & {
   accounts: Array<Omit<AccountsOverview['accounts'][number], 'account'> & { account?: RawAccountSummary }>
 }
 
+type RawAccountDetail = RawAccountsOverview & {
+  operations: AccountDetailSnapshot['operations']
+}
+
 function mapAccount(account: RawAccountSummary): AccountSummary {
   return {
     ...account,
@@ -299,6 +325,14 @@ function mapAccount(account: RawAccountSummary): AccountSummary {
       markPrice: position.markPx,
       size: Math.abs(position.pos),
       leverage: position.lever || 1,
+      notionalUsd: position.notionalUsd,
+      margin: position.margin,
+      marginMode: position.marginMode || position.mgnMode,
+      maintenanceMarginRatePct: position.maintenanceMarginRatePct,
+      maintenanceMarginRatioPct: position.maintenanceMarginRatioPct,
+      maintenanceMarginUsd: position.maintenanceMarginUsd,
+      fundingFee: position.fundingFee,
+      fundingRate: position.fundingRate,
       pnl: position.upl,
       pnlPercent: position.uplRatioPct,
       liquidationPrice: position.liqPx,
@@ -620,7 +654,7 @@ export async function setAutomation(enabled: boolean, settings: PlanSettings, ac
     method: 'POST',
     body: JSON.stringify({
       enabled,
-      intervalSeconds: 15,
+      intervalSeconds: 30,
       executionMode: 'auto',
       dryRun: false,
       accountId,

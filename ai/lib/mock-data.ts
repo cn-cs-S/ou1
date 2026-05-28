@@ -29,6 +29,14 @@ export interface Position {
   markPrice: number
   size: number
   leverage: number
+  notionalUsd?: number
+  margin?: number
+  marginMode?: string
+  maintenanceMarginRatePct?: number
+  maintenanceMarginRatioPct?: number
+  maintenanceMarginUsd?: number
+  fundingFee?: number
+  fundingRate?: number
   pnl: number
   pnlPercent: number
   liquidationPrice: number
@@ -232,6 +240,32 @@ export interface AccountsOverview {
   defaultAccountId: string
   marketSource: string
   accounts: AccountOverviewEntry[]
+}
+
+export interface AccountOperationRecord {
+  id: string
+  ts: string
+  accountId: string
+  accountLabel?: string
+  source: 'ai' | 'manual' | 'system'
+  ai?: boolean
+  event: string
+  instId?: string
+  instType?: string
+  action?: string
+  operation?: string
+  status?: string
+  reason?: string
+  dryRun?: boolean
+  referencePrice?: number | null
+  notionalUsd?: number | null
+  executionFee?: number | null
+  realizedPnl?: number | null
+  message?: string
+}
+
+export interface AccountDetailSnapshot extends AccountsOverview {
+  operations: AccountOperationRecord[]
 }
 
 export interface AutomationState {

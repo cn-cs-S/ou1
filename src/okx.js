@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 
 const DEFAULT_BASE_URL = "https://www.okx.com";
+const DEFAULT_REQUEST_INTERVAL_MS = 220;
+const MAX_RETRIES = 2;
+const MAX_CACHE_ENTRIES = 600;
 const SITE_BASE_URLS = {
   global: "https://www.okx.com",
   eea: "https://my.okx.com",
@@ -30,6 +33,13 @@ export function createOkxClient(config = {}) {
   const apiSecret = config.apiSecret || process.env.OKX_API_SECRET || process.env.OKX_SECRET_KEY || profile.secret_key || "";
   const rawPassphrase = config.passphrase || process.env.OKX_API_PASSPHRASE || process.env.OKX_PASSPHRASE || profile.passphrase || "";
   const passphrase = isPlaceholder(rawPassphrase) ? "" : rawPassphrase;
+  const minRequestIntervalMs = Math.max(Number(config.minRequestIntervalMs || process.env.OKX_REQUEST_INTERVAL_MS || DEFAULT_REQUEST_INTERVAL_MS), 80);
+  const requestCache = new Map();
+  const pendingRequests = new Map();
+  let requestQueue = Promise.resolve();
+  let lastRequestAt = 0;
+  let rateLimitedUntil = 0;
+  let consecutiveRateLimits = 0;
 
   function credentialsStatus() {
     return {
@@ -41,17 +51,39 @@ export function createOkxClient(config = {}) {
       hasSecret: Boolean(apiSecret),
       hasPassphrase: Boolean(passphrase),
       passphrasePlaceholder: Boolean(rawPassphrase && !passphrase),
-      privateReady: Boolean(apiKey && apiSecret && passphrase)
+      privateReady: Boolean(apiKey && apiSecret && passphrase),
+      throttle: {
+        minRequestIntervalMs,
+        rateLimitedUntil: rateLimitedUntil ? new Date(rateLimitedUntil).toISOString() : null,
+        cacheEntries: requestCache.size,
+        pending: pendingRequests.size
+      }
     };
   }
 
   async function request(method, requestPath, body = undefined, options = {}) {
     const auth = Boolean(options.auth);
     const bodyText = body === undefined ? "" : JSON.stringify(body);
-    const headers = {
-      "Content-Type": "application/json"
-    };
+    const cacheKey = `${method}:${auth ? "auth" : "public"}:${requestPath}:${bodyText}`;
+    const cacheMs = Number.isFinite(Number(options.cacheMs))
+      ? Math.max(Number(options.cacheMs), 0)
+      : defaultCacheMs(method, requestPath, auth);
+    const cached = cacheMs > 0 ? requestCache.get(cacheKey) : null;
+    if (cached && Date.now() - cached.at <= cacheMs) return cached.value;
+    if (pendingRequests.has(cacheKey)) return pendingRequests.get(cacheKey);
 
+    const pending = performRequest(method, requestPath, bodyText, auth)
+      .then((json) => {
+        if (cacheMs > 0) rememberCache(requestCache, cacheKey, json);
+        return json;
+      })
+      .finally(() => pendingRequests.delete(cacheKey));
+    pendingRequests.set(cacheKey, pending);
+    return pending;
+  }
+
+  async function performRequest(method, requestPath, bodyText, auth) {
+    const headers = { "Content-Type": "application/json" };
     if (auth) {
       if (!apiKey || !apiSecret || !passphrase) {
         throw new OkxError("Private OKX request requires API key, secret key, and passphrase.", credentialsStatus());
@@ -64,35 +96,93 @@ export function createOkxClient(config = {}) {
       headers["OK-ACCESS-PASSPHRASE"] = passphrase;
     }
 
-    const response = await fetch(`${baseUrl}${requestPath}`, {
-      method,
-      headers,
-      body: method === "GET" ? undefined : bodyText
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+      await waitForRequestSlot();
+      let response;
+      try {
+        response = await fetch(`${baseUrl}${requestPath}`, {
+          method,
+          headers,
+          body: method === "GET" ? undefined : bodyText
+        });
+      } catch (error) {
+        if (attempt < MAX_RETRIES) {
+          await sleep(backoffDelay(attempt, false));
+          continue;
+        }
+        throw error;
+      }
+
+      const text = await response.text();
+      let json;
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        throw new OkxError(`OKX returned non-JSON response (${response.status}).`, {
+          status: response.status,
+          text: text.slice(0, 500)
+        });
+      }
+
+      if (response.status === 429) {
+        consecutiveRateLimits += 1;
+        const retryAfterMs = retryAfterToMs(response.headers.get("retry-after"));
+        const waitMs = retryAfterMs || backoffDelay(attempt, true);
+        rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + waitMs);
+        if (attempt < MAX_RETRIES) {
+          await sleep(waitMs);
+          continue;
+        }
+        throw new OkxError("OKX HTTP error 429. 本地请求已触发交易所限流，系统会自动退避后重试。", {
+          status: response.status,
+          retryAfterMs: waitMs,
+          body: json
+        });
+      }
+
+      if (!response.ok) {
+        throw new OkxError(`OKX HTTP error ${response.status}.`, {
+          status: response.status,
+          body: json
+        });
+      }
+
+      if (json.code && json.code !== "0") {
+        throw new OkxError(formatOkxError(json), json);
+      }
+
+      consecutiveRateLimits = 0;
+      return json;
+    }
+
+    throw new OkxError("OKX request failed after retries.", { requestPath });
+  }
+
+  async function waitForRequestSlot() {
+    const previous = requestQueue.catch(() => {});
+    let release;
+    requestQueue = new Promise((resolve) => {
+      release = resolve;
     });
-
-    const text = await response.text();
-    let json;
+    await previous;
     try {
-      json = text ? JSON.parse(text) : {};
-    } catch (error) {
-      throw new OkxError(`OKX returned non-JSON response (${response.status}).`, {
-        status: response.status,
-        text: text.slice(0, 500)
-      });
+      const now = Date.now();
+      const waitMs = Math.max(
+        0,
+        rateLimitedUntil - now,
+        lastRequestAt + minRequestIntervalMs - now
+      );
+      if (waitMs > 0) await sleep(waitMs);
+      lastRequestAt = Date.now();
+    } finally {
+      release();
     }
+  }
 
-    if (!response.ok) {
-      throw new OkxError(`OKX HTTP error ${response.status}.`, {
-        status: response.status,
-        body: json
-      });
-    }
-
-    if (json.code && json.code !== "0") {
-      throw new OkxError(formatOkxError(json), json);
-    }
-
-    return json;
+  function backoffDelay(attempt, rateLimited) {
+    const base = rateLimited ? 2_500 : 700;
+    const ratePenalty = rateLimited ? Math.min(consecutiveRateLimits * 1_000, 12_000) : 0;
+    return Math.min(base * (2 ** attempt) + ratePenalty + Math.floor(Math.random() * 350), 30_000);
   }
 
   async function getTicker(instId) {
@@ -194,6 +284,51 @@ export function createOkxClient(config = {}) {
     getBalance,
     getPositions
   };
+}
+
+function defaultCacheMs(method, requestPath, auth) {
+  if (method !== "GET") return 0;
+  if (/\/api\/v5\/public\/instruments/.test(requestPath)) return 10 * 60_000;
+  if (/\/api\/v5\/account\/trade-fee/.test(requestPath)) return 10 * 60_000;
+  if (/\/api\/v5\/market\/tickers/.test(requestPath)) return 5_000;
+  if (/\/api\/v5\/market\/ticker/.test(requestPath)) return 2_500;
+  if (/\/api\/v5\/market\/history-candles/.test(requestPath)) {
+    const bar = new URLSearchParams(requestPath.split("?")[1] || "").get("bar") || "";
+    if (/^(1m|3m|5m)$/.test(bar)) return 8_000;
+    if (/^(15m|30m)$/.test(bar)) return 15_000;
+    if (/^(1H|2H|4H)$/.test(bar)) return 30_000;
+    return 60_000;
+  }
+  if (/\/api\/v5\/public\/funding-rate/.test(requestPath)) return 60_000;
+  if (/\/api\/v5\/public\/open-interest/.test(requestPath)) return 20_000;
+  if (/\/api\/v5\/public\/mark-price/.test(requestPath)) return 3_000;
+  if (/\/api\/v5\/market\/books/.test(requestPath)) return 2_000;
+  if (/\/api\/v5\/market\/trades/.test(requestPath)) return 2_000;
+  if (/\/api\/v5\/account\/balance/.test(requestPath)) return 8_000;
+  if (/\/api\/v5\/account\/positions/.test(requestPath)) return 8_000;
+  return auth ? 3_000 : 2_000;
+}
+
+function rememberCache(cache, key, value) {
+  cache.set(key, { at: Date.now(), value });
+  if (cache.size <= MAX_CACHE_ENTRIES) return;
+  const dropCount = Math.ceil(MAX_CACHE_ENTRIES * 0.2);
+  for (const oldKey of cache.keys()) {
+    cache.delete(oldKey);
+    if (cache.size <= MAX_CACHE_ENTRIES - dropCount) break;
+  }
+}
+
+function retryAfterToMs(value) {
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 60_000);
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.min(Math.max(date - Date.now(), 0), 60_000) : 0;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatOkxError(json) {
