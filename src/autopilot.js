@@ -13,6 +13,7 @@ export function createAutopilot({ runPlan, appendLog }) {
           dryRun: true,
           accountId: id,
           settings: {},
+          startDelaySeconds: 0,
           lastRunAt: null,
           nextRunAt: null,
           lastResult: null,
@@ -34,10 +35,23 @@ export function createAutopilot({ runPlan, appendLog }) {
     state.executionMode = ["analysis", "semi", "auto"].includes(input.executionMode) ? input.executionMode : "analysis";
     state.dryRun = input.dryRun !== false;
     state.settings = input.settings || {};
-    state.nextRunAt = state.enabled ? nextAt(state.intervalSeconds) : null;
+    state.startDelaySeconds = clamp(Number(input.startDelaySeconds || 0), 0, Math.max(state.intervalSeconds - 1, 0));
+    state.nextRunAt = state.enabled ? nextAt(state.startDelaySeconds || state.intervalSeconds) : null;
 
     if (state.enabled) {
-      record.timer = setInterval(() => {
+      const scheduleInterval = () => {
+        record.timer = setInterval(() => {
+          runOnce("schedule", accountId).catch((error) => {
+            appendLog?.({
+              level: "error",
+              event: "autopilot_failed",
+              message: `${accountId}: ${error.message}`
+            });
+          });
+        }, state.intervalSeconds * 1000);
+        record.timer.unref?.();
+      };
+      const runScheduled = () => {
         runOnce("schedule", accountId).catch((error) => {
           appendLog?.({
             level: "error",
@@ -45,8 +59,16 @@ export function createAutopilot({ runPlan, appendLog }) {
             message: `${accountId}: ${error.message}`
           });
         });
-      }, state.intervalSeconds * 1000);
-      record.timer.unref?.();
+      };
+      if (state.startDelaySeconds > 0) {
+        record.timer = setTimeout(() => {
+          runScheduled();
+          scheduleInterval();
+        }, state.startDelaySeconds * 1000);
+        record.timer.unref?.();
+      } else {
+        scheduleInterval();
+      }
     }
 
     appendLog?.({
@@ -55,7 +77,7 @@ export function createAutopilot({ runPlan, appendLog }) {
       message: state.enabled
         ? `Autopilot enabled for ${accountId}; evaluating every ${state.intervalSeconds} seconds.`
         : `Autopilot stopped for ${accountId}.`,
-      meta: { accountId, dryRun: state.dryRun, executionMode: state.executionMode }
+      meta: { accountId, dryRun: state.dryRun, executionMode: state.executionMode, startDelaySeconds: state.startDelaySeconds }
     });
 
     return getState(accountId);

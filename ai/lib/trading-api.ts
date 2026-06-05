@@ -3,9 +3,11 @@ import type {
   AccountDetailSnapshot,
   AccountsOverview,
   AccountSource,
+  DecisionComparison,
   AIPlan,
   AIDirection,
   AIRecommendation,
+  LlmConfig,
   MarketFlowReference,
   AutomationState,
   CandleData,
@@ -36,10 +38,266 @@ export interface TerminalHealth {
   automation: AutomationState | null
 }
 
+export interface FullPositionBucketReturn {
+  bucket: string
+  startEquity: number
+  endEquity: number
+  samples: number
+  returnPct: number
+}
+
+export interface FullPositionStats {
+  currentEquity: number
+  availableUsdt: number
+  totalUpl: number
+  totalReturnPct: number
+  hourlyReturnPct: number
+  dailyReturnPct: number
+  winRate: number
+  openWinRate: number
+  sampleWinRate: number
+  maxDrawdownPct: number
+  marginUsagePct: number
+  positions: number
+  samples: number
+  executedActions: number
+  actionCount: number
+  lastSampleAt: string | null
+  recentHours: FullPositionBucketReturn[]
+  recentDays: FullPositionBucketReturn[]
+  score: number
+}
+
+export interface FullPositionTestRow {
+  id: string
+  accountId: string
+  accountLabel: string
+  variant: string
+  slug: string
+  status: 'running' | 'stopped'
+  initialEquityUsdt: number
+  startedAt?: string
+  lastSampleAt?: string | null
+  settings: Partial<PlanSettings>
+  samples?: unknown[]
+  account?: AccountSummary | null
+  accountError?: string
+  stats: FullPositionStats
+}
+
+export interface FullPositionTestSuite {
+  id: string
+  name: string
+  status: 'running' | 'stopped'
+  createdAt: string
+  updatedAt?: string
+  stoppedAt?: string
+  initialEquityUsdt: number
+  intervalSeconds: number
+  symbolMode?: 'all-swap' | 'custom'
+  symbols: string[]
+  analysisSymbols?: string[]
+  rows: FullPositionTestRow[]
+  notes?: string[]
+  best?: {
+    accountId: string
+    accountLabel: string
+    variant: string
+    score: number
+    totalReturnPct: number
+  } | null
+  aggregate?: {
+    accountCount: number
+    avgReturnPct: number
+    avgHourlyReturnPct?: number
+    avgDailyReturnPct?: number
+    avgWinRate: number
+    avgScore: number
+  }
+}
+
+export interface ModelLogSummary {
+  initialEquityUsdt: number
+  currentEquity: number
+  totalProfit: number
+  totalReturnPct: number
+  hourlyProfit: number
+  hourlyReturnPct: number
+  dailyProfit: number
+  dailyReturnPct: number
+  monthlyProfit: number
+  monthlyReturnPct: number
+  yearlyProfit: number
+  yearlyReturnPct: number
+  samples: number
+  lastSampleAt: string | null
+}
+
+export interface ModelOperationRecord {
+  id?: string
+  ts: string
+  accountId?: string
+  accountLabel?: string
+  instId?: string
+  instType?: string
+  action: string
+  side?: string
+  operation?: string
+  status?: string
+  reason?: string
+  leverage?: number | null
+  marginUsdt?: number | null
+  positionSize?: number | null
+  equityBefore?: number | null
+  equityAfter?: number | null
+  notionalUsd?: number | null
+  referencePrice?: number | null
+  realizedPnl?: number | null
+  realizedReturnPct?: number | null
+  executionFee?: number | null
+}
+
+export interface ModelRunLog {
+  scope: 'live' | 'backtest' | string
+  runId: string
+  runName: string
+  modelId: string
+  modelName: string
+  rowId?: string
+  accountId?: string
+  accountLabel?: string
+  initialEquityUsdt: number
+  settings?: Partial<PlanSettings>
+  createdAt: string
+  updatedAt: string
+  summary: ModelLogSummary
+  tradeStats?: {
+    applied: number
+    opens: number
+    adds: number
+    reduces: number
+    closes: number
+    skipped: number
+    wins: number
+    losses: number
+    winRatePct: number
+    realizedPnl: number
+    totalFees: number
+    firstTradeAt?: string | null
+    lastTradeAt?: string | null
+  }
+  paths?: {
+    json?: string
+    modelJson?: string
+    readableLog?: string
+    latestJson?: string
+    latestReadableLog?: string
+  }
+  samples: Array<{ ts: string; equity: number; [key: string]: unknown }>
+  operations: ModelOperationRecord[]
+}
+
+export interface HistoricalBacktestRow {
+  id: string
+  modelId: string
+  modelName: string
+  variant: string
+  slug: string
+  status: 'queued' | 'running' | 'completed' | 'stopped' | 'failed'
+  initialEquityUsdt: number
+  settings: Partial<PlanSettings>
+  samples: Array<{ ts: string; equity: number; [key: string]: unknown }>
+  operations: ModelOperationRecord[]
+  stats: ModelLogSummary
+}
+
+export interface HistoricalBacktestRun {
+  id: string
+  name: string
+  scope: 'backtest'
+  status: 'queued' | 'running' | 'completed' | 'stopped' | 'failed'
+  createdAt: string
+  updatedAt?: string
+  startedAt?: string
+  finishedAt?: string
+  startDate: string
+  endDate: string
+  bar: '1D' | '4H' | '2H' | '1H' | '30m' | '15m' | '5m' | '3m' | '1m'
+  lookbackDays: number
+  lookbackBars?: number
+  stepBars: number
+  initialEquityUsdt: number
+  cacheOnly?: boolean
+  symbols: string[]
+  analysisSymbols: string[]
+  progress: {
+    phase: string
+    current: number
+    total: number
+    percent: number
+    message: string
+  }
+  estimate?: {
+    bars: number
+    symbols: number
+    estimatedOkxRequests: number
+    estimatedFetchMinutes: number
+    estimatedFetchHours?: number
+    estimatedReplaySteps?: number
+    estimatedCacheMb?: number
+  }
+  rows: HistoricalBacktestRow[]
+  aggregate?: {
+    accountCount: number
+    avgReturnPct: number
+    avgDailyReturnPct?: number
+    avgMonthlyReturnPct?: number
+    best?: {
+      rowId: string
+      modelId: string
+      modelName: string
+      totalReturnPct: number
+      totalProfit: number
+    } | null
+  }
+  notes?: string[]
+}
+
 export interface SkillStatus {
   active: boolean
   installed: number
   executable: number
+  writeEnabled: number
+  skills: SkillRegistryEntry[]
+}
+
+export interface SkillDependencyStatus {
+  name: string
+  ready: boolean
+  detail?: Record<string, unknown>
+}
+
+export interface SkillRegistryEntry {
+  name: string
+  category: string
+  automationLevel: string
+  writeAccess: boolean
+  dependencies: string[]
+  indicators: string[]
+  logic: string
+  trigger: string
+  installed: boolean
+  localPath: string
+  dependencyStatus: SkillDependencyStatus[]
+}
+
+export interface TradingAgentsChatMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  model?: string
+  latencyMs?: number
+  createdAt?: string
+  usage?: unknown
 }
 
 interface ContractPlan {
@@ -107,6 +365,7 @@ interface RawInvestmentPlan {
 
 export const defaultPlanSettings: PlanSettings = {
   budgetUsdt: 1000,
+  autoBudget: true,
   lookbackDays: 60,
   objective: 'balanced',
   riskLevel: 5,
@@ -114,16 +373,25 @@ export const defaultPlanSettings: PlanSettings = {
   minOrderUsdt: 10,
   targetReturn: 12,
   maxDrawdown: 8,
+  minConfidence: 60,
   excludeNewCoins: true,
-  productPreference: 'both',
+  productPreference: 'swap',
   favoritePoolOnly: false,
+  symbols: '',
+  symbolLimit: 80,
+  minLeverage: 5,
+  maxLeverage: 5,
   manageExistingPositions: true,
   allowNewPositions: true,
   allowPositionIncrease: true,
   maxActionsPerCycle: 6,
+  decisionEngine: 'hybrid',
+  tradingAgentsWeight: 50,
+  forceTradingAgents: false,
 }
 
 const OKX_LEVERAGE_TIERS = [1, 2, 3, 5, 10, 20, 50]
+const STABLE_BASES = new Set(['USDT', 'USDC', 'USDG', 'DAI', 'FDUSD', 'TUSD', 'USDD', 'PYUSD', 'GUSD', 'USDP', 'BUSD', 'USD', 'USD1'])
 
 function displayLeverageTier(value: number) {
   const cap = Math.min(Math.max(Number(value || 1), 1), 50)
@@ -165,8 +433,72 @@ export async function fetchHealth(): Promise<TerminalHealth> {
 }
 
 export async function fetchSkillStatus(): Promise<SkillStatus> {
-  const data = await request<{ installed: number; executable: number }>('/skills')
-  return { active: data.executable > 0, installed: data.installed, executable: data.executable }
+  const data = await request<{ installed: number; executable: number; writeEnabled?: number; skills?: SkillRegistryEntry[] }>('/skills')
+  return {
+    active: data.executable > 0,
+    installed: data.installed,
+    executable: data.executable,
+    writeEnabled: data.writeEnabled || 0,
+    skills: data.skills || [],
+  }
+}
+
+export async function fetchLlmConfig(): Promise<LlmConfig> {
+  const data = await request<{ config: LlmConfig }>('/llm/config')
+  return data.config
+}
+
+export async function saveLlmConfig(input: Partial<LlmConfig> & { apiKey?: string; clearApiKey?: boolean }): Promise<LlmConfig> {
+  const data = await request<{ config: LlmConfig }>('/llm/config', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+  return data.config
+}
+
+export async function testLlmConnection() {
+  return request<{ test: { ok: boolean; model: string; latencyMs: number; usage?: unknown; content?: string }; config: LlmConfig }>('/llm/test', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+}
+
+export async function compareDecisionEngines(input: {
+  instId: string
+  settings: PlanSettings
+  accountSource?: AccountSource
+  accountId?: string
+}): Promise<DecisionComparison> {
+  const data = await request<{ comparison: DecisionComparison }>('/ai/compare', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return data.comparison
+}
+
+export async function chatWithTradingAgents(input: {
+  messages: TradingAgentsChatMessage[]
+  instId?: string
+  includeMarket?: boolean
+  bar?: string
+}): Promise<{ reply: TradingAgentsChatMessage; config: LlmConfig }> {
+  return request<{ reply: TradingAgentsChatMessage; config: LlmConfig }>('/tradingagents/chat', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+export async function fetchFavorites(): Promise<string[]> {
+  const data = await request<{ favorites: string[] }>('/favorites')
+  return data.favorites || []
+}
+
+export async function saveFavorites(favorites: string[]): Promise<string[]> {
+  const data = await request<{ favorites: string[] }>('/favorites', {
+    method: 'PUT',
+    body: JSON.stringify({ favorites }),
+  })
+  return data.favorites || []
 }
 
 export async function fetchAssets(): Promise<CryptoAsset[]> {
@@ -194,7 +526,7 @@ export async function fetchAssets(): Promise<CryptoAsset[]> {
     request<UniverseResponse>('/universe?instType=SPOT&quoteCcy=USDT&excludeNew=0&minAgeDays=30&limit=500'),
     request<UniverseResponse>('/universe?instType=SWAP&quoteCcy=USDT&excludeNew=0&minAgeDays=30&limit=500'),
   ])
-  return [...spot.universe.candidates, ...swap.universe.candidates].map((asset) => ({
+  return [...spot.universe.candidates, ...swap.universe.candidates].filter((asset) => !isStableBase(asset.baseCcy)).map((asset) => ({
     id: asset.instId,
     instId: asset.instId,
     instType: asset.instType,
@@ -211,6 +543,11 @@ export async function fetchAssets(): Promise<CryptoAsset[]> {
     maxLeverage: asset.instType === 'SWAP' ? displayLeverageTier(asset.lever) : 1,
     contractValue: asset.ctVal,
   })).sort((a, b) => b.aiScore - a.aiScore || a.instType.localeCompare(b.instType))
+}
+
+function isStableBase(base: string) {
+  const normalized = String(base || '').toUpperCase()
+  return STABLE_BASES.has(normalized) || /^(?:[A-Z0-9]{0,4}USD|USD[A-Z0-9]{0,4})$/.test(normalized)
 }
 
 export async function fetchChart(instId: string, bar: string): Promise<ChartSnapshot> {
@@ -268,6 +605,94 @@ export async function fetchAccountDetails(): Promise<AccountDetailSnapshot> {
   }
 }
 
+export async function fetchFullPositionTests(): Promise<FullPositionTestSuite[]> {
+  const data = await request<{ suites: RawFullPositionTestSuite[] }>('/full-position-tests')
+  return (data.suites || []).map(mapFullPositionSuite)
+}
+
+export async function startFullPositionTest(input: {
+  name?: string
+  accountCount: number
+  initialEquityUsdt: number
+  intervalMinutes?: number
+  intervalSeconds?: number
+  symbolMode?: 'all-swap' | 'custom'
+  symbolLimit?: number
+  analysisSymbolLimit?: number
+  excludeNewCoins?: boolean
+  symbols: string
+  decisionEngine: PlanSettings['decisionEngine'] | 'all'
+  runImmediately?: boolean
+  resetExisting?: boolean
+}): Promise<FullPositionTestSuite> {
+  const data = await request<{ suite: RawFullPositionTestSuite }>('/full-position-tests/run', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return mapFullPositionSuite(data.suite)
+}
+
+export async function stopFullPositionTest(suiteId: string): Promise<FullPositionTestSuite> {
+  const data = await request<{ suite: RawFullPositionTestSuite }>('/full-position-tests/stop', {
+    method: 'POST',
+    body: JSON.stringify({ suiteId }),
+  })
+  return mapFullPositionSuite(data.suite)
+}
+
+export async function fetchModelLogs(input: {
+  scope?: string
+  runId?: string
+  modelId?: string
+  limit?: number
+} = {}): Promise<ModelRunLog[]> {
+  const params = new URLSearchParams()
+  if (input.scope) params.set('scope', input.scope)
+  if (input.runId) params.set('runId', input.runId)
+  if (input.modelId) params.set('modelId', input.modelId)
+  if (input.limit) params.set('limit', String(input.limit))
+  const data = await request<{ logs: ModelRunLog[] }>(`/model-logs${params.toString() ? `?${params.toString()}` : ''}`)
+  return data.logs || []
+}
+
+export async function fetchHistoricalBacktests(): Promise<HistoricalBacktestRun[]> {
+  const data = await request<{ runs: HistoricalBacktestRun[] }>('/historical-backtests')
+  return data.runs || []
+}
+
+export async function startHistoricalBacktest(input: {
+  name?: string
+  startDate: string
+  endDate: string
+  bar: '1D' | '4H' | '2H' | '1H' | '30m' | '15m' | '5m' | '3m' | '1m'
+  lookbackDays: number
+  lookbackBars?: number
+  stepBars: number
+  accountCount: number
+  initialEquityUsdt: number
+  symbolMode?: 'all-swap' | 'custom'
+  symbolLimit?: number
+  analysisSymbolLimit?: number
+  excludeNewCoins?: boolean
+  symbols?: string
+  decisionEngine?: PlanSettings['decisionEngine']
+  cacheOnly?: boolean
+}): Promise<HistoricalBacktestRun> {
+  const data = await request<{ run: HistoricalBacktestRun }>('/historical-backtests/run', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return data.run
+}
+
+export async function stopHistoricalBacktest(runId: string): Promise<HistoricalBacktestRun> {
+  const data = await request<{ run: HistoricalBacktestRun }>('/historical-backtests/stop', {
+    method: 'POST',
+    body: JSON.stringify({ runId }),
+  })
+  return data.run
+}
+
 export async function fetchAutomation(accountId = 'default'): Promise<AutomationState> {
   const data = await request<{ autopilot: AutomationState }>(`/autopilot?accountId=${encodeURIComponent(accountId)}`)
   return data.autopilot
@@ -310,6 +735,20 @@ type RawAccountsOverview = Omit<AccountsOverview, 'accounts'> & {
 
 type RawAccountDetail = RawAccountsOverview & {
   operations: AccountDetailSnapshot['operations']
+}
+
+type RawFullPositionTestSuite = Omit<FullPositionTestSuite, 'rows'> & {
+  rows: Array<Omit<FullPositionTestRow, 'account'> & { account?: RawAccountSummary | null }>
+}
+
+function mapFullPositionSuite(suite: RawFullPositionTestSuite): FullPositionTestSuite {
+  return {
+    ...suite,
+    rows: (suite.rows || []).map((row) => ({
+      ...row,
+      account: row.account ? mapAccount(row.account) : null,
+    })),
+  }
 }
 
 function mapAccount(account: RawAccountSummary): AccountSummary {
@@ -380,7 +819,11 @@ export async function generateInvestmentPlan(settings: PlanSettings, assets: Cry
     try {
       const capitalBudget = Number(asset.valueUsdt || 0)
       const plans = await fetchContractPair(
-        directionAsset, settings.riskLevel, index === 0 ? 15000 : 10000,
+        {
+          ...directionAsset,
+          minLeverage: Math.max(settings.minLeverage || 5, 5),
+          maxLeverage: Math.min(directionAsset.maxLeverage || 1, settings.maxLeverage || directionAsset.maxLeverage || 1),
+        }, settings.riskLevel, index === 0 ? 15000 : 10000,
         accountSource, accountId, capitalBudget,
       )
       return { plans, directionAsset, notice: undefined }
@@ -482,16 +925,20 @@ export async function fetchFocusedRecommendation(settings: PlanSettings, asset: 
   let directionNotice: string | undefined
   if (derivativeAsset?.instType === 'SWAP') {
     const capitalBudget = settings.budgetUsdt * settings.maxAssetWeight / 100
-    contract = await fetchContractPair(derivativeAsset, settings.riskLevel, 15000, accountSource, accountId, capitalBudget)
+    contract = await fetchContractPair({
+      ...derivativeAsset,
+      minLeverage: Math.max(settings.minLeverage || 5, 5),
+      maxLeverage: Math.min(derivativeAsset.maxLeverage || 1, settings.maxLeverage || derivativeAsset.maxLeverage || 1),
+    }, settings.riskLevel, 15000, accountSource, accountId, capitalBudget)
   } else {
     directionNotice = '该币种当前没有对应的 USDT 永续合约，现货只能给出买入/观望判断，无法生成可执行做空方案。'
   }
   return mapRecommendation(candidate, asset, contract, data.plan.confidence, derivativeAsset, directionNotice)
 }
 
-async function fetchContractPair(asset: CryptoAsset, riskLevel: number, timeoutMs: number, accountSource: AccountSource, accountId: string, capitalBudget: number): Promise<[ContractPlan, ContractPlan]> {
+async function fetchContractPair(asset: CryptoAsset & { minLeverage?: number }, riskLevel: number, timeoutMs: number, accountSource: AccountSource, accountId: string, capitalBudget: number): Promise<[ContractPlan, ContractPlan]> {
   const riskPct = Math.min(Math.max(riskLevel / 5, 0.5), 2)
-  const path = `/contract/pair?instId=${encodeURIComponent(asset.instId)}&riskPct=${riskPct}&maxLeverage=${asset.maxLeverage || 1}&accountSource=${encodeURIComponent(accountSource)}&accountId=${encodeURIComponent(accountId)}&capitalBudget=${capitalBudget}`
+  const path = `/contract/pair?instId=${encodeURIComponent(asset.instId)}&riskPct=${riskPct}&minLeverage=${Math.max(asset.minLeverage || 5, 5)}&maxLeverage=${asset.maxLeverage || 1}&accountSource=${encodeURIComponent(accountSource)}&accountId=${encodeURIComponent(accountId)}&capitalBudget=${capitalBudget}`
   try {
     const data = await request<{ plans: { long: ContractPlan; short: ContractPlan } }>(path, { signal: AbortSignal.timeout(timeoutMs) })
     return [data.plans.long, data.plans.short]

@@ -7,15 +7,15 @@
 :root {
   /* Deep dark backgrounds */
   --background: oklch(0.12 0.005 260);
-  --foreground: oklch(0.92 0 0);
+  --foreground: oklch(0.96 0.002 260);
   
   /* Card surfaces */
   --card: oklch(0.15 0.005 260);
-  --card-foreground: oklch(0.92 0 0);
+  --card-foreground: oklch(0.96 0.002 260);
   
   /* Popover/dropdown */
   --popover: oklch(0.17 0.005 260);
-  --popover-foreground: oklch(0.92 0 0);
+  --popover-foreground: oklch(0.96 0.002 260);
   
   /* Primary - subtle gold/yellow accent */
   --primary: oklch(0.82 0.15 85);
@@ -23,15 +23,15 @@
   
   /* Secondary */
   --secondary: oklch(0.22 0.005 260);
-  --secondary-foreground: oklch(0.85 0 0);
+  --secondary-foreground: oklch(0.90 0.002 260);
   
   /* Muted */
   --muted: oklch(0.20 0.005 260);
-  --muted-foreground: oklch(0.55 0 0);
+  --muted-foreground: oklch(0.72 0.006 260);
   
   /* Accent */
   --accent: oklch(0.25 0.01 260);
-  --accent-foreground: oklch(0.92 0 0);
+  --accent-foreground: oklch(0.96 0.002 260);
   
   /* Destructive - Red for losses/sell */
   --destructive: oklch(0.55 0.22 25);
@@ -61,30 +61,30 @@
   
   /* Sidebar */
   --sidebar: oklch(0.13 0.005 260);
-  --sidebar-foreground: oklch(0.92 0 0);
+  --sidebar-foreground: oklch(0.96 0.002 260);
   --sidebar-primary: oklch(0.82 0.15 85);
   --sidebar-primary-foreground: oklch(0.12 0 0);
   --sidebar-accent: oklch(0.20 0.005 260);
-  --sidebar-accent-foreground: oklch(0.92 0 0);
+  --sidebar-accent-foreground: oklch(0.96 0.002 260);
   --sidebar-border: oklch(0.25 0.005 260);
   --sidebar-ring: oklch(0.50 0.10 85);
 }
 
 .dark {
   --background: oklch(0.10 0.005 260);
-  --foreground: oklch(0.92 0 0);
+  --foreground: oklch(0.96 0.002 260);
   --card: oklch(0.13 0.005 260);
-  --card-foreground: oklch(0.92 0 0);
+  --card-foreground: oklch(0.96 0.002 260);
   --popover: oklch(0.15 0.005 260);
-  --popover-foreground: oklch(0.92 0 0);
+  --popover-foreground: oklch(0.96 0.002 260);
   --primary: oklch(0.82 0.15 85);
   --primary-foreground: oklch(0.12 0 0);
   --secondary: oklch(0.20 0.005 260);
-  --secondary-foreground: oklch(0.85 0 0);
+  --secondary-foreground: oklch(0.90 0.002 260);
   --muted: oklch(0.18 0.005 260);
-  --muted-foreground: oklch(0.55 0 0);
+  --muted-foreground: oklch(0.72 0.006 260);
   --accent: oklch(0.22 0.01 260);
-  --accent-foreground: oklch(0.92 0 0);
+  --accent-foreground: oklch(0.96 0.002 260);
   --destructive: oklch(0.50 0.22 25);
   --destructive-foreground: oklch(0.98 0 0);
   --success: oklch(0.50 0.18 145);
@@ -95,18 +95,18 @@
   --input: oklch(0.18 0.005 260);
   --ring: oklch(0.45 0.10 85);
   --sidebar: oklch(0.11 0.005 260);
-  --sidebar-foreground: oklch(0.92 0 0);
+  --sidebar-foreground: oklch(0.96 0.002 260);
   --sidebar-primary: oklch(0.82 0.15 85);
   --sidebar-primary-foreground: oklch(0.12 0 0);
   --sidebar-accent: oklch(0.18 0.005 260);
-  --sidebar-accent-foreground: oklch(0.92 0 0);
+  --sidebar-accent-foreground: oklch(0.96 0.002 260);
   --sidebar-border: oklch(0.22 0.005 260);
   --sidebar-ring: oklch(0.45 0.10 85);
 }
 
 @theme inline {
-  --font-sans: 'Geist', 'Geist Fallback', system-ui, sans-serif;
-  --font-mono: 'Geist Mono', 'Geist Mono Fallback', monospace;
+  --font-sans: 'Inter', 'Noto Sans SC', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', 'PingFang SC', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', 'Cascadia Mono', 'Consolas', 'Liberation Mono', monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -155,6 +155,12 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    letter-spacing: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: geometricPrecision;
   }
 }
 

@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const DEFAULT_EQUITY = 100_000;
+const DEFAULT_EQUITY = 1_000_000;
 
 export function createTestAccountRegistry({ defaultFilePath, directoryPath, catalogPath, initialEquity = DEFAULT_EQUITY }) {
   let catalog = readCatalog(catalogPath);
   const accounts = new Map();
   const defaultEntry = {
     id: "default",
+    purpose: "manual-test",
     label: "默认测试账户",
     filePath: defaultFilePath,
     createdAt: catalog.find((entry) => entry.id === "default")?.createdAt || new Date().toISOString()
@@ -39,12 +40,14 @@ export function createTestAccountRegistry({ defaultFilePath, directoryPath, cata
     return accounts.get(entry.id);
   }
 
-  function create({ label, initialEquityUsdt }) {
+  function create({ label, initialEquityUsdt, purpose }) {
     const normalizedLabel = String(label || "").trim().slice(0, 24) || `测试账户 ${catalog.length}`;
+    const normalizedPurpose = String(purpose || "manual-test").trim().slice(0, 40) || "manual-test";
     const id = `test-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     const entry = {
       id,
       label: normalizedLabel,
+      purpose: normalizedPurpose,
       filePath: path.join(directoryPath, `${id}.json`),
       createdAt: new Date().toISOString()
     };

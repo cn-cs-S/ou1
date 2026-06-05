@@ -1,3 +1,5 @@
+import { isStableInstrument } from "./stableCoins.js";
+
 export const DEFAULT_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "OKB-USDT"];
 
 const OBJECTIVES = {
@@ -27,10 +29,12 @@ const OBJECTIVES = {
   }
 };
 
-export function sanitizeUniverse(input) {
+export function sanitizeUniverse(input, options = {}) {
   const raw = Array.isArray(input)
     ? input
     : String(input || DEFAULT_SYMBOLS.join(",")).split(/[,\s]+/);
+  const max = Number(options.max ?? 16);
+  const limit = Number.isFinite(max) && max > 0 ? Math.floor(max) : Infinity;
 
   const seen = new Set();
   const symbols = [];
@@ -42,13 +46,14 @@ export function sanitizeUniverse(input) {
       symbol = `${symbol}-USDT`;
     }
     if (!/^[A-Z0-9]+-[A-Z0-9]+(-[A-Z0-9]+)?$/.test(symbol)) continue;
+    if (isStableInstrument(symbol)) continue;
     if (!seen.has(symbol)) {
       seen.add(symbol);
       symbols.push(symbol);
     }
   }
 
-  return symbols.slice(0, 16);
+  return symbols.slice(0, limit);
 }
 
 export function buildInvestmentPlan(marketData, settings = {}) {
@@ -64,7 +69,8 @@ export function buildInvestmentPlan(marketData, settings = {}) {
 
   const assets = Object.entries(marketData)
     .map(([symbol, data]) => analyzeAsset(symbol, data))
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((asset) => !isStableInstrument(asset.symbol));
 
   if (!assets.length) {
     return {

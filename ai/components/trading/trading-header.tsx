@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Activity, Wifi, WifiOff, Sparkles, Clock, WalletCards } from 'lucide-react'
+import { Activity, Wifi, WifiOff, Sparkles, Clock, WalletCards, FlaskConical, BrainCircuit } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -105,6 +105,14 @@ export function TradingHeader({ symbol, instType, accountSource, accountLabel, i
               {formatSignedMoney(pnl)}
             </strong>
           </span>
+          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => { window.location.href = '/ai-lab' }}>
+            <FlaskConical className="h-3.5 w-3.5" />
+            AI 对比
+          </Button>
+          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => { window.location.href = '/tradingagents' }}>
+            <BrainCircuit className="h-3.5 w-3.5" />
+            TradingAgents
+          </Button>
           <Button size="sm" variant="outline" className="h-8 text-xs" onClick={onOpenAccounts}>
             <WalletCards className="h-3.5 w-3.5" />
             账户总览

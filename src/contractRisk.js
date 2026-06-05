@@ -5,7 +5,7 @@ export function snapOkxLeverage(value, upperBound = 50) {
   return OKX_LEVERAGE_TIERS.filter((tier) => tier <= capped).at(-1) || 1;
 }
 
-export function buildContractRiskPlan({ instId, side = "long", ticker = {}, candles = [], instrument = {}, fundingRate = {}, openInterest = {}, marketFlow = null, account = {}, riskPct = 1, maxLeverage = 10, capitalBudget = null, feeRate = 0.0005, feeSource = "estimated" }) {
+export function buildContractRiskPlan({ instId, side = "long", ticker = {}, candles = [], instrument = {}, fundingRate = {}, openInterest = {}, marketFlow = null, trendAlignment = null, account = {}, riskPct = 1, minLeverage = 1, maxLeverage = 10, capitalBudget = null, feeRate = 0.0005, feeSource = "estimated" }) {
   const price = Number(ticker.last || candles.at(-1)?.close || 0);
   const closes = candles.map((item) => item.close).filter(Number.isFinite);
   const atr14 = atr(candles, 14);
@@ -15,7 +15,9 @@ export function buildContractRiskPlan({ instId, side = "long", ticker = {}, cand
   const instrumentMaxLeverage = clamp(Number(instrument.lever || 1), 1, 50);
   const exchangeMaxLeverage = snapOkxLeverage(instrumentMaxLeverage, instrumentMaxLeverage);
   const maxLev = Math.min(requestedMaxLeverage, exchangeMaxLeverage);
-  const recommendedLeverage = recommendLeverage({ maxLev, volatility, signal });
+  const requestedMinLeverage = snapOkxLeverage(minLeverage, maxLev);
+  const minLev = Math.min(requestedMinLeverage, maxLev);
+  const recommendedLeverage = Math.max(minLev, recommendLeverage({ maxLev, volatility, signal }));
   const stopDistance = Math.max(atr14 * 2, price * 0.012);
   const stop = side === "short" ? price + stopDistance : price - stopDistance;
   const target1 = side === "short" ? price - stopDistance * 1.6 : price + stopDistance * 1.6;
@@ -44,8 +46,14 @@ export function buildContractRiskPlan({ instId, side = "long", ticker = {}, cand
   const roundTripFee = entryFee * 2;
   const estimatedSevenDayCost = weeklyFundingCost + roundTripFee;
   const oi = Number(openInterest.oiCcy || openInterest.oi || 0);
-  const riskScore = clamp(Math.round(volatility * 35 + recommendedLeverage * 2.5 + (stopBeforeLiq ? 5 : 22)), 1, 100);
-  const timing = entryTiming({ side, signal, price, stop, target1, target2, volatility, marketFlow });
+  const trendSide = trendAlignment?.sides?.[side] || null;
+  const riskScore = clamp(Math.round(
+    volatility * 35
+    + recommendedLeverage * 2.5
+    + (stopBeforeLiq ? 5 : 22)
+    + trendRiskPenalty(trendSide)
+  ), 1, 100);
+  const timing = entryTiming({ side, signal, price, stop, target1, target2, volatility, marketFlow, trendAlignment });
   const trailingStop = side === "short" ? price - stopDistance * 0.35 : price + stopDistance * 0.35;
 
   return {
@@ -64,14 +72,17 @@ export function buildContractRiskPlan({ instId, side = "long", ticker = {}, cand
       signal,
       fundingRate: round(funding, 8),
       openInterest: round(oi, 2),
-      orderFlow: marketFlow
+      orderFlow: marketFlow,
+      trendAlignment
     },
     recommendation: {
       leverage: recommendedLeverage,
       maxLeverage: maxLev,
+      minLeverage: minLev,
       exchangeMaxLeverage,
       instrumentMaxLeverage,
       requestedMaxLeverage,
+      requestedMinLeverage,
       entry: roundPrice(price),
       stop: roundPrice(stop),
       target1: roundPrice(target1),
@@ -92,6 +103,7 @@ export function buildContractRiskPlan({ instId, side = "long", ticker = {}, cand
       estimatedSevenDayCost: round(estimatedSevenDayCost, 4),
       riskScore,
       riskLevel: riskScore >= 70 ? "高" : riskScore >= 40 ? "中" : "低",
+      trend: trendSide,
       timing,
       tpSl: {
         stopLoss: roundPrice(stop),
@@ -109,15 +121,17 @@ export function buildContractRiskPlan({ instId, side = "long", ticker = {}, cand
         volatility,
         requestedMaxLeverage,
         exchangeMaxLeverage,
-        marketFlow
+        marketFlow,
+        trendSide
       })
     },
-    tiers: buildTiers({ price, stopDistance, side, ctVal, equity, riskPct, maxLev })
+    tiers: buildTiers({ price, stopDistance, side, ctVal, equity, riskPct, minLev, maxLev })
   };
 }
 
-function entryTiming({ side, signal, price, stop, target1, target2, volatility, marketFlow }) {
+function entryTiming({ side, signal, price, stop, target1, target2, volatility, marketFlow, trendAlignment }) {
   const aligned = side === "short" ? -signal : signal;
+  const trendSide = trendAlignment?.sides?.[side] || null;
   const pullback = Math.abs(price - stop) * 0.28;
   const betterEntry = side === "short" ? price + pullback : price - pullback;
   const flowConflict = marketFlow
@@ -129,6 +143,26 @@ function entryTiming({ side, signal, price, stop, target1, target2, volatility, 
       state: "wait",
       label: "等待资金流转向",
       reason: `当前订单流与计划方向冲突：${marketFlow.summary}。`,
+      entryZone: [roundPrice(betterEntry), roundPrice(price)],
+      exitHint: `若已持有，优先观察 ${roundPrice(stop)} 附近的防守线。`,
+      invalidation: side === "short" ? `突破 ${roundPrice(stop)} 后空头逻辑失效` : `跌破 ${roundPrice(stop)} 后多头逻辑失效`
+    };
+  }
+  if (trendSide?.blocked) {
+    return {
+      state: "wait",
+      label: "长短周期未共振",
+      reason: trendSide.reason || "多周期趋势尚未支持当前方向，等待长线与短线重新同向。",
+      entryZone: [roundPrice(betterEntry), roundPrice(price)],
+      exitHint: `若已持有，优先观察 ${roundPrice(stop)} 附近的防守线。`,
+      invalidation: side === "short" ? `突破 ${roundPrice(stop)} 后空头逻辑失效` : `跌破 ${roundPrice(stop)} 后多头逻辑失效`
+    };
+  }
+  if (trendSide && trendAlignment?.longShortConflict && !trendSide.aligned && Number(trendSide.confidence || 0) < 62) {
+    return {
+      state: "wait",
+      label: "趋势冲突观望",
+      reason: `${trendSide.reason || "长短周期方向冲突。"} 等待 15m/1H 与 4H/1D 至少一侧完成确认后再入场。`,
       entryZone: [roundPrice(betterEntry), roundPrice(price)],
       exitHint: `若已持有，优先观察 ${roundPrice(stop)} 附近的防守线。`,
       invalidation: side === "short" ? `突破 ${roundPrice(stop)} 后空头逻辑失效` : `跌破 ${roundPrice(stop)} 后多头逻辑失效`
@@ -148,10 +182,23 @@ function entryTiming({ side, signal, price, stop, target1, target2, volatility, 
     const flowConfirmation = marketFlow && marketFlow.direction === side
       ? ` 订单流同向确认：${marketFlow.label}。`
       : "";
+    const trendConfirmation = trendSide?.aligned
+      ? ` 多周期同向确认：置信度 ${trendSide.confidence}%，一致性 ${trendSide.consistency}%。`
+      : "";
     return {
       state: "enter",
       label: "可小仓试入",
-      reason: `方向动量与交易方向一致，波动未进入极端区间。${flowConfirmation}`,
+      reason: `方向动量与交易方向一致，波动未进入极端区间。${flowConfirmation}${trendConfirmation}`,
+      entryZone: [roundPrice(betterEntry), roundPrice(price)],
+      exitHint: `第一止盈 ${roundPrice(target1)}，剩余仓位看 ${roundPrice(target2)}。`,
+      invalidation: side === "short" ? `突破 ${roundPrice(stop)} 后停止做空` : `跌破 ${roundPrice(stop)} 后停止做多`
+    };
+  }
+  if (trendSide?.aligned && Number(trendSide.confidence || 0) >= 68 && aligned >= -0.05 && volatility < 1.35) {
+    return {
+      state: "enter",
+      label: "趋势共振试入",
+      reason: `${trendSide.reason} 单周期动量未明显反向，允许用较小仓位跟随长短周期共振。`,
       entryZone: [roundPrice(betterEntry), roundPrice(price)],
       exitHint: `第一止盈 ${roundPrice(target1)}，剩余仓位看 ${roundPrice(target2)}。`,
       invalidation: side === "short" ? `突破 ${roundPrice(stop)} 后停止做空` : `跌破 ${roundPrice(stop)} 后停止做多`
@@ -167,11 +214,11 @@ function entryTiming({ side, signal, price, stop, target1, target2, volatility, 
   };
 }
 
-function buildTiers({ price, stopDistance, side, ctVal, equity, riskPct, maxLev }) {
+function buildTiers({ price, stopDistance, side, ctVal, equity, riskPct, minLev, maxLev }) {
   return [
-    { name: "保守", riskFactor: 0.5, leverage: snapOkxLeverage(3, maxLev), rr: 1.4 },
-    { name: "均衡", riskFactor: 1, leverage: snapOkxLeverage(5, maxLev), rr: 1.8 },
-    { name: "进攻", riskFactor: 1.5, leverage: snapOkxLeverage(10, maxLev), rr: 2.4 }
+    { name: "保守", riskFactor: 0.5, leverage: Math.max(minLev, snapOkxLeverage(3, maxLev)), rr: 1.4 },
+    { name: "均衡", riskFactor: 1, leverage: Math.max(minLev, snapOkxLeverage(5, maxLev)), rr: 1.8 },
+    { name: "进攻", riskFactor: 1.5, leverage: Math.max(minLev, snapOkxLeverage(10, maxLev)), rr: 2.4 }
   ].map((tier) => {
     const stop = side === "short" ? price + stopDistance * tier.riskFactor : price - stopDistance * tier.riskFactor;
     const target = side === "short" ? price - stopDistance * tier.riskFactor * tier.rr : price + stopDistance * tier.riskFactor * tier.rr;
@@ -199,6 +246,13 @@ function recommendLeverage({ maxLev, volatility, signal }) {
   else if (volatility > 0.85) base -= 1;
   else if (volatility < 0.45) base += 1;
   return snapOkxLeverage(base, maxLev);
+}
+
+function trendRiskPenalty(trendSide) {
+  if (!trendSide) return 6;
+  if (trendSide.blocked) return 30;
+  if (trendSide.aligned) return -8;
+  return clamp(55 - Number(trendSide.confidence || 0), 0, 24);
 }
 
 function quickSignal(closes) {
@@ -239,7 +293,7 @@ function liquidationEstimate(entry, leverage, side) {
   return entry * (1 - 1 / leverage + mmr);
 }
 
-function buildNotes({ contractsByRisk, margin, availableUsdt, stopBeforeLiq, weeklyFundingCost, volatility, requestedMaxLeverage, exchangeMaxLeverage, marketFlow }) {
+function buildNotes({ contractsByRisk, margin, availableUsdt, stopBeforeLiq, weeklyFundingCost, volatility, requestedMaxLeverage, exchangeMaxLeverage, marketFlow, trendSide }) {
   const notes = [];
   if (requestedMaxLeverage > exchangeMaxLeverage) notes.push(`该合约在真实市场的最大可用杠杆为 ${exchangeMaxLeverage}x，建议已按上限收敛。`);
   if (contractsByRisk <= 0) notes.push("账户风险预算不足以形成最小合约仓位。");
@@ -249,6 +303,7 @@ function buildNotes({ contractsByRisk, margin, availableUsdt, stopBeforeLiq, wee
   if (volatility > 1.2) notes.push("近期波动偏高，建议使用保守档或半仓验证。");
   if (marketFlow?.summary) notes.push(`资金异动参考：${marketFlow.summary}。`);
   if (marketFlow?.openInterestAnomaly === "rising") notes.push("OI 连续采样出现放大，参考了旧项目连续上涨窗口逻辑；方向仍须结合主动成交与盘口判断。");
+  if (trendSide?.reason) notes.push(`趋势一致性：${trendSide.reason}`);
   return notes.length ? notes : ["风险参数处于可控区间，仍建议先干跑和小额模拟验证。"];
 }
 

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 const DEFAULT_BASE_URL = "https://www.okx.com";
-const DEFAULT_REQUEST_INTERVAL_MS = 220;
+const DEFAULT_REQUEST_INTERVAL_MS = 320;
 const MAX_RETRIES = 2;
 const MAX_CACHE_ENTRIES = 600;
 const SITE_BASE_URLS = {
@@ -42,6 +42,7 @@ export function createOkxClient(config = {}) {
   let consecutiveRateLimits = 0;
 
   function credentialsStatus() {
+    const activeRateLimitedUntil = rateLimitedUntil > Date.now() ? rateLimitedUntil : 0;
     return {
       baseUrl,
       source,
@@ -54,7 +55,7 @@ export function createOkxClient(config = {}) {
       privateReady: Boolean(apiKey && apiSecret && passphrase),
       throttle: {
         minRequestIntervalMs,
-        rateLimitedUntil: rateLimitedUntil ? new Date(rateLimitedUntil).toISOString() : null,
+        rateLimitedUntil: activeRateLimitedUntil ? new Date(activeRateLimitedUntil).toISOString() : null,
         cacheEntries: requestCache.size,
         pending: pendingRequests.size
       }
@@ -201,6 +202,19 @@ export function createOkxClient(config = {}) {
     return (json.data || []).map(parseCandle).filter(Boolean).reverse();
   }
 
+  async function getHistoricalCandlesPage(instId, bar = "1D", limit = 300, cursor = {}) {
+    const params = {
+      instId,
+      bar,
+      limit: String(Math.min(Math.max(Number(limit) || 300, 1), 300))
+    };
+    if (cursor.before) params.before = String(cursor.before);
+    if (cursor.after) params.after = String(cursor.after);
+    const query = new URLSearchParams(params).toString();
+    const json = await request("GET", `/api/v5/market/history-candles?${query}`, undefined, { cacheMs: 24 * 60 * 60_000 });
+    return (json.data || []).map(parseCandle).filter(Boolean).reverse();
+  }
+
   async function getTickers(instType = "SPOT") {
     const query = new URLSearchParams({ instType }).toString();
     const json = await request("GET", `/api/v5/market/tickers?${query}`);
@@ -274,6 +288,7 @@ export function createOkxClient(config = {}) {
     getTicker,
     getTickers,
     getCandles,
+    getHistoricalCandlesPage,
     getInstruments,
     getFundingRate,
     getOpenInterest,

@@ -1,4 +1,5 @@
-const STABLES = new Set(["USDT", "USDC", "DAI", "FDUSD", "TUSD", "USD"]);
+import { isStableBase } from "./stableCoins.js";
+
 const MEME_HINTS = /DOGE|SHIB|PEPE|BONK|FLOKI|WIF|MEME|TURBO|PENGU|TRUMP/i;
 
 export function buildUniverse({ instruments = [], tickers = [], instType = "SPOT", quoteCcy = "USDT", minAgeDays = 30, excludeNew = true, limit = 80 }) {
@@ -41,7 +42,7 @@ export function buildUniverse({ instruments = [], tickers = [], instType = "SPOT
       };
     })
     .filter((item) => item.last > 0)
-    .filter((item) => !STABLES.has(item.baseCcy))
+    .filter((item) => !isStableBase(item.baseCcy))
     .filter((item) => !excludeNew || !item.isNew);
 
   const scored = scoreUniverse(rows)

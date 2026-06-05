@@ -1,40 +1,85 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Activity, ArrowLeft, BriefcaseBusiness, Clock3, History, Play, Plus, RefreshCcw, RotateCcw, Settings2, ShieldCheck, Trash2, Wallet } from 'lucide-react'
+import { ArrowLeft, Bot, BriefcaseBusiness, ChevronDown, ChevronUp, History, Plus, RefreshCcw, RotateCcw, Save, Settings2, ShieldCheck, SlidersHorizontal, Trash2, Wallet } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
-import { createTestAccount, defaultPlanSettings, deleteTestAccount, fetchAccountDetails, resetTestAccount, runAutomationNow, setAutomation as setAccountAutomation } from '@/lib/trading-api'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import {
+  createTestAccount,
+  defaultPlanSettings,
+  deleteTestAccount,
+  fetchAccountDetails,
+  resetTestAccount,
+  runAutomationNow,
+  setAutomation as setAccountAutomation,
+} from '@/lib/trading-api'
 import { cn } from '@/lib/utils'
 import { formatMoney, formatPrice, formatSignedMoney } from '@/lib/format'
-import type { AccountDetailSnapshot, AccountOperationRecord, AccountOverviewEntry, Position } from '@/lib/mock-data'
+import type { AccountDetailSnapshot, AccountOperationRecord, AccountOverviewEntry, PlanSettings, Position } from '@/lib/mock-data'
 
-const REFRESH_MS = 30_000
+const REFRESH_MS = 1_000
+const OKX_LEVERAGE_OPTIONS = [1, 2, 3, 5, 10, 20, 50]
+const MIN_LEVERAGE_OPTIONS = [5, 10, 20, 50]
+const LEGACY_DEFAULT_SYMBOL_POOL = ['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BTC-USDT-SWAP', 'ETH-USDT-SWAP']
+type AccountTab = 'positions' | 'trades' | 'ai'
 
 export default function AccountsDetailPage() {
   const [snapshot, setSnapshot] = useState<AccountDetailSnapshot | null>(null)
-  const [selectedId, setSelectedId] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [actionPending, setActionPending] = useState(false)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [tabs, setTabs] = useState<Record<string, AccountTab>>({})
+  const [settingsEntry, setSettingsEntry] = useState<AccountOverviewEntry | null>(null)
+  const [aiEntry, setAiEntry] = useState<AccountOverviewEntry | null>(null)
+  const [createOpen, setCreateOpen] = useState(false)
   const [newAccountLabel, setNewAccountLabel] = useState('策略测试账户')
-  const [newAccountEquity, setNewAccountEquity] = useState(100000)
-  const [resetEquity, setResetEquity] = useState(100000)
+  const [newAccountEquity, setNewAccountEquity] = useState(1000000)
+  const [resetEquity, setResetEquity] = useState(1000000)
+  const [loading, setLoading] = useState(true)
+  const [actionPending, setActionPending] = useState(false)
+  const [error, setError] = useState('')
+  const loadingRef = useRef(false)
+
+  const accounts = snapshot?.accounts || []
+  const operations = snapshot?.operations || []
+  const expandableAccountIds = accounts.filter((entry) => entry.account?.positions.length).map((entry) => entry.id)
+  const allExpanded = expandableAccountIds.length > 0 && expandableAccountIds.every((id) => expanded.has(id))
+
+  const totals = useMemo(() => {
+    const realAccounts = accounts.map((entry) => entry.account).filter(Boolean)
+    const equity = realAccounts.reduce((sum, account) => sum + Number(account?.totalEqUsd || 0), 0)
+    const upl = realAccounts.reduce((sum, account) => sum + Number(account?.totalUpl || 0), 0)
+    const positions = realAccounts.reduce((sum, account) => sum + Number(account?.positions.length || 0), 0)
+    return { equity, upl, positions, ratio: equity ? upl / equity * 100 : 0 }
+  }, [accounts])
 
   const load = useCallback(async (quiet = false) => {
+    if (loadingRef.current) return
+    loadingRef.current = true
     if (!quiet) setLoading(true)
     try {
       const next = await fetchAccountDetails()
       setSnapshot(next)
       setError('')
+      setExpanded((current) => {
+        if (!current.size) return new Set()
+        const activeWithPositions = new Set(next.accounts.filter((entry) => entry.account?.positions.length).map((entry) => entry.id))
+        return new Set([...current].filter((id) => activeWithPositions.has(id)))
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : '账户详情读取失败')
     } finally {
+      loadingRef.current = false
       if (!quiet) setLoading(false)
     }
   }, [])
@@ -46,38 +91,6 @@ export default function AccountsDetailPage() {
     }, REFRESH_MS)
     return () => window.clearInterval(timer)
   }, [load])
-
-  useEffect(() => {
-    if (!snapshot?.accounts.length) return
-    setSelectedId((current) => {
-      if (current && snapshot.accounts.some((entry) => entry.id === current)) return current
-      const fromUrl = new URLSearchParams(window.location.search).get('accountId')
-      if (fromUrl && snapshot.accounts.some((entry) => entry.id === fromUrl)) return fromUrl
-      return snapshot.accounts[0].id
-    })
-  }, [snapshot])
-
-  const accounts = snapshot?.accounts || []
-  const selected = accounts.find((entry) => entry.id === selectedId) || accounts[0] || null
-  const operations = useMemo(() => {
-    if (!snapshot || !selected) return []
-    return snapshot.operations.filter((record) => record.accountId === selected.id)
-  }, [snapshot, selected])
-
-  const totals = useMemo(() => {
-    const all = accounts.map((entry) => entry.account).filter(Boolean)
-    return {
-      equity: all.reduce((sum, account) => sum + Number(account?.totalEqUsd || 0), 0),
-      upl: all.reduce((sum, account) => sum + Number(account?.totalUpl || 0), 0),
-      margin: all.reduce((sum, account) => sum + Number(account?.usedMargin || 0), 0),
-      positions: all.reduce((sum, account) => sum + Number(account?.positions.length || 0), 0),
-    }
-  }, [accounts])
-
-  useEffect(() => {
-    const initial = selected?.account?.initialEquityUsdt || selected?.account?.totalEqUsd || 100000
-    setResetEquity(Math.max(1, Math.round(initial)))
-  }, [selected?.id])
 
   async function runAccountAction(action: () => Promise<void>) {
     setActionPending(true)
@@ -91,26 +104,51 @@ export default function AccountsDetailPage() {
     }
   }
 
-  function automationSymbols(entry: AccountOverviewEntry) {
+  function toggleExpanded(accountId: string) {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(accountId)) next.delete(accountId)
+      else next.add(accountId)
+      return next
+    })
+  }
+
+  function toggleAll() {
+    setExpanded(allExpanded ? new Set() : new Set(expandableAccountIds))
+  }
+
+  function setAccountTab(accountId: string, tab: AccountTab) {
+    setTabs((current) => ({ ...current, [accountId]: tab }))
+  }
+
+  function automationSymbols(entry: AccountOverviewEntry, settings = normalizeAiSettings(entry.automation?.settings, entry.account)) {
+    const explicit = parseSymbolPool(settings.symbols)
+    if (explicit.length) return explicit
     const held = (entry.account?.positions || []).map((position) => position.instId)
-    return [...new Set([...held, 'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BTC-USDT-SWAP', 'ETH-USDT-SWAP'])].slice(0, 12)
+    return [...new Set(held)].slice(0, 12)
   }
 
   async function createAccount() {
     if (!newAccountLabel.trim() || newAccountEquity <= 0) return
     await runAccountAction(async () => {
-      const created = await createTestAccount(newAccountLabel.trim(), newAccountEquity)
-      setSelectedId(created.account.accountId || 'default')
+      await createTestAccount(newAccountLabel.trim(), newAccountEquity)
+      setCreateOpen(false)
+      await load(true)
+    })
+  }
+
+  async function saveAiSettings(entry: AccountOverviewEntry, settings: PlanSettings, enabled = Boolean(entry.automation?.enabled)) {
+    if (entry.source !== 'test') return
+    await runAccountAction(async () => {
+      const normalized = normalizeAiSettings(settings, entry.account)
+      await setAccountAutomation(enabled, normalized, entry.id, automationSymbols(entry, normalized))
       await load(true)
     })
   }
 
   async function toggleAutomation(entry: AccountOverviewEntry, enabled: boolean) {
     if (entry.source !== 'test') return
-    await runAccountAction(async () => {
-      await setAccountAutomation(enabled, defaultPlanSettings, entry.id, automationSymbols(entry))
-      await load(true)
-    })
+    await saveAiSettings(entry, normalizeAiSettings(entry.automation?.settings, entry.account), enabled)
   }
 
   async function runAutomation(entry: AccountOverviewEntry) {
@@ -126,16 +164,17 @@ export default function AccountsDetailPage() {
     if (!window.confirm(`确认重置 ${entry.label}？当前测试持仓和盈亏会清空。`)) return
     await runAccountAction(async () => {
       await resetTestAccount(resetEquity, entry.id)
+      setSettingsEntry(null)
       await load(true)
     })
   }
 
-  async function deleteAccount(entry: AccountOverviewEntry) {
+  async function removeAccount(entry: AccountOverviewEntry) {
     if (entry.source !== 'test' || entry.id === 'default') return
-    if (!window.confirm(`确认删除 ${entry.label}？此操作会删除该测试账户文件。`)) return
+    if (!window.confirm(`确认删除 ${entry.label}？`)) return
     await runAccountAction(async () => {
       await deleteTestAccount(entry.id)
-      setSelectedId('default')
+      setSettingsEntry(null)
       await load(true)
     })
   }
@@ -145,154 +184,453 @@ export default function AccountsDetailPage() {
       <header className="sticky top-0 z-20 border-b border-border bg-background/95 px-4 py-3 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <Button size="icon-sm" variant="outline" className="h-8 w-8" title="返回交易终端" onClick={() => { window.location.href = '/' }}>
+            <Button size="icon-sm" variant="outline" className="h-8 w-8" title="返回首页" onClick={() => { window.location.href = '/' }}>
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <div className="min-w-0">
-              <h1 className="flex items-center gap-2 text-base font-semibold">
+              <h1 className="flex items-center gap-2 text-lg font-semibold">
                 <Wallet className="h-4 w-4 text-primary" />
-                账户详情
+                账户管理
               </h1>
-              <p className="truncate text-xs text-muted-foreground">资金、持仓和操作记录每 30 秒自动刷新；真实账户保持只读展示。</p>
+              <p className="truncate text-sm text-foreground/70">独立账户看板，每秒刷新权益、浮盈、收益率和持仓。</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <SummaryPill label="总权益" value={`$${formatMoney(totals.equity)}`} />
             <SummaryPill label="总浮盈" value={formatSignedMoney(totals.upl)} tone={totals.upl >= 0 ? 'text-gain' : 'text-loss'} />
+            <SummaryPill label="收益率" value={`${totals.ratio >= 0 ? '+' : ''}${totals.ratio.toFixed(2)}%`} tone={totals.ratio >= 0 ? 'text-gain' : 'text-loss'} />
             <SummaryPill label="持仓" value={`${totals.positions}`} />
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={toggleAll}>
+              {allExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              {allExpanded ? '收起全部' : '展开全部'}
+            </Button>
             <Button size="sm" variant="outline" className="h-8 text-xs" disabled={loading} onClick={() => void load()}>
               <RefreshCcw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
               刷新
             </Button>
+            <Button size="sm" className="h-8 text-xs" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-3.5 w-3.5" />
+              添加测试账户
+            </Button>
           </div>
         </div>
-        {error ? (
-          <div className="mt-3 rounded-md border border-loss/50 bg-loss/10 px-3 py-2 text-xs text-loss">{error}</div>
-        ) : null}
+        {error && <div className="mt-3 rounded-md border border-loss/50 bg-loss/10 px-3 py-2 text-sm text-loss">{error}</div>}
       </header>
 
-      <div className="grid gap-0 lg:grid-cols-[280px_minmax(0,1fr)_400px]">
-        <aside className="border-b border-border bg-card/40 lg:min-h-[calc(100vh-65px)] lg:border-b-0 lg:border-r">
-          <PanelTitle icon={<BriefcaseBusiness className="h-4 w-4 text-primary" />} title="账号" meta={`${accounts.length} 个`} />
-          <ScrollArea className="lg:h-[calc(100vh-118px)]">
-            <div className="space-y-2 p-3">
-              {accounts.map((entry) => (
-                <AccountRow
-                  key={entry.id}
-                  entry={entry}
-                  active={entry.id === selected?.id}
-                  onSelect={() => setSelectedId(entry.id)}
-                />
-              ))}
-              {!accounts.length && (
-                <div className="rounded-md border border-border px-3 py-8 text-center text-xs text-muted-foreground">暂无账户</div>
-              )}
-              <CreateAccountBox
-                label={newAccountLabel}
-                equity={newAccountEquity}
-                disabled={actionPending}
-                onLabelChange={setNewAccountLabel}
-                onEquityChange={setNewAccountEquity}
-                onCreate={() => void createAccount()}
-              />
-            </div>
-          </ScrollArea>
-        </aside>
-
-        <section className="min-w-0 border-b border-border bg-background lg:min-h-[calc(100vh-65px)] lg:border-b-0 lg:border-r">
-          <PanelTitle icon={<Activity className="h-4 w-4 text-primary" />} title="详细持仓" meta={selected?.label || '未选择'} />
-          <ScrollArea className="lg:h-[calc(100vh-118px)]">
-            <div className="space-y-4 p-4">
-              {selected?.account ? (
-                <>
-                  <AccountMetrics entry={selected} />
-                  {selected.account.hedge?.active ? (
-                    <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">{selected.account.hedge.text}</div>
-                  ) : null}
-                  <AccountSettings
-                    entry={selected}
-                    actionPending={actionPending}
-                    resetEquity={resetEquity}
-                    onResetEquityChange={setResetEquity}
-                    onToggleAutomation={(enabled) => void toggleAutomation(selected, enabled)}
-                    onRunAutomation={() => void runAutomation(selected)}
-                    onResetAccount={() => void resetAccount(selected)}
-                    onDeleteAccount={() => void deleteAccount(selected)}
-                  />
-                  <PositionsBlock positions={selected.account.positions} />
-                </>
-              ) : (
-                <div className="rounded-md border border-border px-3 py-10 text-center text-xs text-muted-foreground">
-                  {selected?.message || '该账户当前没有可展示的明细'}
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        </section>
-
-        <aside className="bg-card/30 lg:min-h-[calc(100vh-65px)]">
-          <PanelTitle icon={<History className="h-4 w-4 text-primary" />} title="操作记录" meta={selected ? `${operations.length} 条` : '--'} />
-          <div className="flex flex-wrap gap-2 border-b border-border px-4 pb-3 text-[11px]">
-            <Badge className="border-primary/60 bg-primary/10 text-primary" variant="outline">AI 操作</Badge>
-            <Badge className="border-sky-400/50 bg-sky-400/10 text-sky-300" variant="outline">手动</Badge>
-            <Badge className="border-muted-foreground/40 bg-muted/30 text-muted-foreground" variant="outline">系统</Badge>
+      <section className="grid min-h-[calc(100vh-92px)] gap-4 p-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 md:p-4">
+        {accounts.map((entry) => (
+          <AccountColumn
+            key={entry.id}
+            entry={entry}
+            expanded={expanded.has(entry.id)}
+            activeTab={tabs[entry.id] || 'positions'}
+            operations={operations.filter((record) => record.accountId === entry.id)}
+            actionPending={actionPending}
+            onToggleExpanded={() => toggleExpanded(entry.id)}
+            onTabChange={(tab) => setAccountTab(entry.id, tab)}
+            onOpenSettings={() => {
+              setResetEquity(Math.max(1, Math.round(entry.account?.initialEquityUsdt || entry.account?.totalEqUsd || 1000000)))
+              setSettingsEntry(entry)
+            }}
+            onOpenAi={() => setAiEntry(entry)}
+            onToggleAutomation={(enabled) => void toggleAutomation(entry, enabled)}
+            onRunAutomation={() => void runAutomation(entry)}
+          />
+        ))}
+        {!accounts.length && (
+          <div className="rounded-xl border border-border px-4 py-12 text-center text-sm text-foreground/70">
+            暂无账户
           </div>
-          <ScrollArea className="lg:h-[calc(100vh-154px)]">
-            <div className="space-y-2 p-3">
-              {operations.map((record) => (
-                <OperationRow key={record.id} record={record} />
-              ))}
-              {!operations.length && (
-                <div className="rounded-md border border-border px-3 py-10 text-center text-xs text-muted-foreground">
-                  当前账号暂无操作记录。执行计划、手动调仓或开启自动化后会显示在这里。
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        </aside>
-      </div>
+        )}
+      </section>
+
+      <CreateAccountDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        label={newAccountLabel}
+        equity={newAccountEquity}
+        disabled={actionPending}
+        onLabelChange={setNewAccountLabel}
+        onEquityChange={setNewAccountEquity}
+        onCreate={() => void createAccount()}
+      />
+
+      <AccountSettingsDialog
+        entry={settingsEntry}
+        resetEquity={resetEquity}
+        disabled={actionPending}
+        onOpenChange={(open) => { if (!open) setSettingsEntry(null) }}
+        onResetEquityChange={setResetEquity}
+        onReset={() => settingsEntry && void resetAccount(settingsEntry)}
+        onDelete={() => settingsEntry && void removeAccount(settingsEntry)}
+      />
+
+      <AiSettingsDialog
+        entry={aiEntry}
+        disabled={actionPending}
+        onOpenChange={(open) => { if (!open) setAiEntry(null) }}
+        onSave={(settings, enabled) => aiEntry && void saveAiSettings(aiEntry, settings, enabled)}
+      />
     </main>
   )
 }
 
-function AccountRow({ entry, active, onSelect }: { entry: AccountOverviewEntry; active: boolean; onSelect: () => void }) {
+function AccountColumn({
+  entry,
+  expanded,
+  activeTab,
+  operations,
+  actionPending,
+  onToggleExpanded,
+  onTabChange,
+  onOpenSettings,
+  onOpenAi,
+  onToggleAutomation,
+  onRunAutomation,
+}: {
+  entry: AccountOverviewEntry
+  expanded: boolean
+  activeTab: AccountTab
+  operations: AccountOperationRecord[]
+  actionPending: boolean
+  onToggleExpanded: () => void
+  onTabChange: (tab: AccountTab) => void
+  onOpenSettings: () => void
+  onOpenAi: () => void
+  onToggleAutomation: (enabled: boolean) => void
+  onRunAutomation: () => void
+}) {
   const account = entry.account
-  const isLive = entry.source === 'live-readonly'
+  const pnl = Number(account?.totalUpl || 0)
+  const ratio = Number(account?.uplRatio || 0)
+  const isTest = entry.source === 'test'
   const automationEnabled = Boolean(entry.automation?.enabled)
+  const positions = account?.positions || []
+  const hasPositions = positions.length > 0
+  const pnlFlash = useValueFlash(pnl)
+  const tradeOperations = operations.filter(isTradeOperation)
+  const aiOperations = operations.filter((record) => !isTradeOperation(record))
+
   return (
-    <button
-      type="button"
+    <article
       className={cn(
-        'w-full rounded-md border border-border bg-background/55 p-3 text-left transition hover:border-primary/50 hover:bg-accent/40',
-        active && 'border-primary/70 bg-primary/10'
+        'group h-fit overflow-hidden rounded-2xl border border-border bg-card/95 shadow-[0_8px_24px_rgba(0,0,0,0.16)] transition duration-200 hover:-translate-y-1 hover:border-primary/50 hover:bg-card hover:shadow-[0_22px_55px_rgba(0,0,0,0.28)]',
+        expanded && 'border-primary/45 shadow-[0_18px_42px_rgba(0,0,0,0.24)]',
       )}
-      onClick={onSelect}
     >
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          {isLive ? <ShieldCheck className="h-4 w-4 shrink-0 text-gain" /> : <BriefcaseBusiness className="h-4 w-4 shrink-0 text-warning" />}
-          <span className="truncate text-sm font-medium">{entry.label}</span>
+      <div className="px-4 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <button type="button" className="min-w-0 text-left" onClick={hasPositions ? onToggleExpanded : undefined}>
+            <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate text-base font-semibold">{entry.label}</h2>
+            <Badge className={entry.status === 'connected' ? 'border-gain/30 bg-gain/15 text-gain' : 'border-warning/40 bg-warning/15 text-warning'} variant="outline">
+              {entry.status === 'connected' ? '在线' : '离线'}
+            </Badge>
+            </div>
+            <p className="mt-1 max-w-[210px] truncate font-mono text-xs text-foreground/65">{entry.id}</p>
+          </button>
+          <div className="flex items-center gap-2 rounded-full border border-border bg-background/60 px-2 py-1">
+            <span className="text-xs font-semibold text-foreground/70">AI</span>
+            <Switch checked={automationEnabled} disabled={!isTest || actionPending} onCheckedChange={(value) => onToggleAutomation(Boolean(value))} />
+          </div>
         </div>
-        <Badge variant="outline" className={cn('shrink-0 text-[10px]', isLive ? 'border-gain/60 text-gain' : 'border-warning/60 text-warning')}>
-          {isLive ? '真实只读' : '测试'}
-        </Badge>
+
+        <div className="mt-6 grid grid-cols-2 gap-4">
+          <CompactMetric label="总权益" value={`$${formatMoney(account?.totalEqUsd || 0)}`} />
+          <div className={cn(
+            'rounded-xl border border-border bg-background/60 px-3 py-2 transition duration-300',
+            pnlFlash === 'gain' && 'scale-[1.03] border-gain/60 bg-gain/10 shadow-[0_0_30px_rgba(0,190,120,0.28)]',
+            pnlFlash === 'loss' && 'scale-[1.03] border-loss/60 bg-loss/10 shadow-[0_0_30px_rgba(240,70,90,0.28)]',
+          )}>
+            <p className="text-xs font-semibold text-foreground/70">每秒浮盈</p>
+            <p className={cn('mt-1 font-mono text-2xl font-semibold transition', pnl >= 0 ? 'text-gain' : 'text-loss', pnlFlash !== 'none' && 'animate-pulse')}>
+              {formatSignedMoney(pnl)}
+            </p>
+            <p className={cn('font-mono text-sm font-semibold', ratio >= 0 ? 'text-gain' : 'text-loss')}>
+              {ratio >= 0 ? '+' : ''}{ratio.toFixed(2)}%
+            </p>
+          </div>
+          <CompactMetric label="可用资金" value={`$${formatMoney(account?.availableUsdt || 0)}`} />
+          <CompactMetric label="当前持仓" value={`${positions.length} 个`} tone={positions.length ? 'text-primary' : 'text-foreground/55'} />
+        </div>
+
+        <div className="mt-5 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1">
+          <Button size="icon-sm" variant="ghost" className="h-8 w-8" title="账户设置" onClick={onOpenSettings}>
+            <Settings2 className="h-4 w-4" />
+          </Button>
+          <Button size="icon-sm" variant="ghost" className="h-8 w-8" title="AI 设置" onClick={onOpenAi}>
+            <Bot className="h-4 w-4" />
+          </Button>
+          <Button size="icon-sm" variant="ghost" className="h-8 w-8" title={hasPositions ? (expanded ? '收起' : '展开') : '暂无持仓'} disabled={!hasPositions} onClick={onToggleExpanded}>
+            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </Button>
+          </div>
+          <Button size="sm" variant="outline" className="h-8 rounded-full px-3 text-xs" disabled={!isTest || !automationEnabled || actionPending} onClick={onRunAutomation}>
+            立即运行 AI
+          </Button>
+        </div>
       </div>
-      <div className="grid grid-cols-2 gap-2 text-[11px]">
-        <MiniMetric label="权益" value={account ? `$${formatMoney(account.totalEqUsd)}` : '--'} />
-        <MiniMetric label="浮盈" value={account ? formatSignedMoney(account.totalUpl) : '--'} tone={account && account.totalUpl >= 0 ? 'text-gain' : 'text-loss'} />
-        <MiniMetric label="可用" value={account ? `$${formatMoney(account.availableUsdt)}` : '--'} />
-        <MiniMetric label="持仓" value={account ? `${account.positions.length}` : '--'} />
-      </div>
-      <Separator className="my-2" />
-      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-        <span>{entry.status === 'connected' ? '已连接' : entry.status === 'not-configured' ? '待配置' : '不可用'}</span>
-        <span className={automationEnabled ? 'text-gain' : ''}>{automationEnabled ? '自动化开启' : isLive ? '只读' : '自动化关闭'}</span>
-      </div>
-    </button>
+
+      {expanded && (
+        <div className="space-y-3 border-t border-border bg-background/35 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <TabButton active={activeTab === 'positions'} onClick={() => onTabChange('positions')}>仓位情况</TabButton>
+            <TabButton active={activeTab === 'trades'} onClick={() => onTabChange('trades')}>操作记录</TabButton>
+            <TabButton active={activeTab === 'ai'} onClick={() => onTabChange('ai')}>AI 判断</TabButton>
+            <span className="ml-auto text-xs text-foreground/70">{positions.length} 个持仓</span>
+          </div>
+
+          {activeTab === 'positions' ? (
+            <PositionsList positions={positions} />
+          ) : activeTab === 'trades' ? (
+            <OperationsList operations={tradeOperations} emptyText="暂无开仓/加仓/平仓记录" />
+          ) : (
+            <OperationsList operations={aiOperations} emptyText="暂无 AI 判断记录" />
+          )}
+        </div>
+      )}
+    </article>
   )
 }
 
-function CreateAccountBox({
+function PositionsList({ positions }: { positions: Position[] }) {
+  if (!positions.length) {
+    return <div className="rounded-xl border border-border px-3 py-6 text-center text-sm text-foreground/70">暂无持仓</div>
+  }
+  return (
+    <div className="space-y-2">
+      {positions.map((position) => (
+        <PositionCard key={position.id} position={position} />
+      ))}
+    </div>
+  )
+}
+
+function PositionCard({ position }: { position: Position }) {
+  const positive = position.pnl >= 0
+  return (
+    <section className="rounded-xl border border-border bg-background/70 px-3 py-3 shadow-[0_8px_18px_rgba(0,0,0,0.12)] transition hover:border-primary/40 hover:bg-background">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="truncate font-mono text-sm font-semibold text-primary">{position.instId}</span>
+          <Badge className={cn('h-5 border-0 px-1.5 text-[11px]', position.side === 'long' ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss')}>
+            {position.side === 'long' ? '多' : '空'}
+          </Badge>
+          <Badge className="h-5 border-0 bg-warning/15 px-1.5 text-[11px] text-warning">{position.leverage.toFixed(1)}x</Badge>
+        </div>
+        <p className="mt-0.5 text-xs text-foreground/65">{position.type === 'spot' ? '现货' : '永续合约'}</p>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+        <CompactMetric label="入场价" value={`$${formatPrice(position.entryPrice)}`} />
+        <CompactMetric label="标记价" value={`$${formatPrice(position.markPrice)}`} />
+        <CompactMetric label="持仓量" value={formatPositionHolding(position)} tone={position.side === 'short' ? 'text-loss' : 'text-gain'} />
+        <CompactMetric label="保证金" value={position.margin !== undefined ? `$${formatMoney(position.margin)}` : '--'} />
+        <CompactMetric label="浮动收益" value={formatSignedMoney(position.pnl)} tone={positive ? 'text-gain' : 'text-loss'} />
+        <CompactMetric label="收益率" value={`${position.pnlPercent >= 0 ? '+' : ''}${position.pnlPercent.toFixed(2)}%`} tone={positive ? 'text-gain' : 'text-loss'} />
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <Badge variant="outline" className={cn('h-7 rounded-full', position.liquidationPrice > 0 ? 'border-warning/50 text-warning' : 'border-border text-foreground/70')}>
+          {position.liquidationPrice > 0 ? `强平 $${formatPrice(position.liquidationPrice)}` : '无强平价'}
+        </Badge>
+        <Button type="button" size="sm" className="h-7 rounded-full bg-destructive px-3 text-xs text-destructive-foreground hover:bg-destructive/90">平仓</Button>
+        <Button type="button" size="sm" className="h-7 rounded-full bg-warning px-3 text-xs text-warning-foreground hover:bg-warning/90">止盈止损</Button>
+      </div>
+    </section>
+  )
+}
+
+function OperationsList({ operations, emptyText }: { operations: AccountOperationRecord[]; emptyText: string }) {
+  if (!operations.length) {
+    return <div className="rounded-xl border border-border px-3 py-8 text-center text-sm text-foreground/70">{emptyText}</div>
+  }
+  return (
+    <div className="space-y-2">
+      {operations.slice(0, 10).map((record) => (
+        <div key={record.id} className="rounded-xl border border-border bg-background/70 px-3 py-2">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
+                <Badge variant="outline" className={sourceClass(record.source)}>{record.source === 'ai' ? 'AI' : record.source === 'manual' ? '手动' : '系统'}</Badge>
+                {record.dryRun && <Badge variant="outline" className="border-warning text-warning">演练</Badge>}
+                <span className="truncate text-sm font-semibold">{record.instId || eventLabel(record.event)}</span>
+              </div>
+              <p className="mt-1 line-clamp-2 text-xs leading-5 text-foreground/70">{record.operation || eventLabel(record.event)}{record.reason ? `：${record.reason}` : ''}</p>
+            </div>
+            <div className="shrink-0 text-right">
+              <Badge variant="outline" className={statusClass(record.status || '')}>{statusText(record.status || '')}</Badge>
+              <p className="mt-1 whitespace-nowrap text-[11px] text-foreground/55">{formatTime(record.ts)}</p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function AiSettingsDialog({
+  entry,
+  disabled,
+  onOpenChange,
+  onSave,
+}: {
+  entry: AccountOverviewEntry | null
+  disabled: boolean
+  onOpenChange: (open: boolean) => void
+  onSave: (settings: PlanSettings, enabled: boolean) => void
+}) {
+  const [draft, setDraft] = useState<PlanSettings>(defaultPlanSettings)
+  const [enabled, setEnabled] = useState(false)
+
+  useEffect(() => {
+    if (!entry) return
+    setDraft(normalizeAiSettings(entry.automation?.settings, entry.account))
+    setEnabled(Boolean(entry.automation?.enabled))
+  }, [entry])
+
+  if (!entry) return null
+  const activeEntry = entry
+  const canEdit = activeEntry.source === 'test' && !disabled
+
+  function update<K extends keyof PlanSettings>(key: K, value: PlanSettings[K]) {
+    setDraft((current) => normalizeAiSettings({ ...current, [key]: value }, activeEntry.account))
+  }
+
+  return (
+    <Dialog open={Boolean(entry)} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>AI 设置 · {activeEntry.label}</DialogTitle>
+          <DialogDescription>这里只保留影响自动化和收益/风险的核心参数，其余细节由 Skills 与 TradingAgents 自行处理。</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="flex items-center justify-between rounded-xl border border-border bg-card p-3">
+            <div>
+              <p className="font-semibold">开启账户 AI</p>
+              <p className="text-sm text-foreground/65">{activeEntry.source === 'test' ? '开启后仅操作本地测试账户。' : '真实账户当前只读，不能开启自动操作。'}</p>
+            </div>
+            <Switch checked={enabled} disabled={!canEdit} onCheckedChange={setEnabled} />
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <SettingSelect label="产品倾向" value={draft.productPreference} disabled={!canEdit} options={[['both', '现货 + 合约'], ['spot', '只做现货'], ['swap', '只做合约']]} onChange={(value) => update('productPreference', value as PlanSettings['productPreference'])} />
+            <SettingSelect label="决策引擎" value={draft.decisionEngine || 'hybrid'} disabled={!canEdit} options={[['hybrid', 'Skills + TA'], ['skills', '只用 Skills'], ['tradingagents', 'TA 最终判断']]} onChange={(value) => update('decisionEngine', value as PlanSettings['decisionEngine'])} />
+            <SettingSelect label="最低杠杆" value={String(draft.minLeverage || 5)} disabled={!canEdit || draft.productPreference === 'spot'} options={MIN_LEVERAGE_OPTIONS.map((tier) => [String(tier), `${tier}x`] as const)} onChange={(value) => update('minLeverage', Number(value))} />
+            <SettingSelect label="最高杠杆" value={String(draft.maxLeverage || 5)} disabled={!canEdit || draft.productPreference === 'spot'} options={OKX_LEVERAGE_OPTIONS.map((tier) => [String(tier), `${tier}x`] as const)} onChange={(value) => update('maxLeverage', Number(value))} />
+            <SettingInput label="风险等级" value={draft.riskLevel} disabled={!canEdit} onChange={(value) => update('riskLevel', Number(value))} />
+            <SettingInput label="最低置信度 %" value={draft.minConfidence || 60} disabled={!canEdit} onChange={(value) => update('minConfidence', Number(value))} />
+            <SettingInput label="单币上限 %" value={draft.maxAssetWeight} disabled={!canEdit} onChange={(value) => update('maxAssetWeight', Number(value))} />
+            <SettingInput label="最小订单 USDT" value={draft.minOrderUsdt} disabled={!canEdit} onChange={(value) => update('minOrderUsdt', Number(value))} />
+          </div>
+
+          <div className="rounded-xl border border-border bg-background/55 p-3">
+            <p className="mb-2 text-sm font-semibold">候选币池</p>
+            <Input
+              value={draft.symbols || ''}
+              disabled={!canEdit}
+              placeholder="BTC-USDT, ETH-USDT-SWAP, SOL-USDT"
+              className="font-mono text-xs"
+              onChange={(event) => update('symbols', event.target.value)}
+            />
+            <p className="mt-2 text-xs text-foreground/65">留空时使用当前持仓和默认主流观察池。为了追求收益率，合约最低杠杆默认 5x；若交易所最大杠杆低于 5x，会自动按交易所上限收敛。</p>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <SettingSwitch label="管理已有持仓" checked={draft.manageExistingPositions} disabled={!canEdit} onChange={(value) => update('manageExistingPositions', value)} />
+            <SettingSwitch label="允许新开仓" checked={draft.allowNewPositions} disabled={!canEdit} onChange={(value) => update('allowNewPositions', value)} />
+            <SettingSwitch label="允许加仓" checked={draft.allowPositionIncrease} disabled={!canEdit} onChange={(value) => update('allowPositionIncrease', value)} />
+            <SettingSwitch label="排除新币" checked={draft.excludeNewCoins} disabled={!canEdit} onChange={(value) => update('excludeNewCoins', value)} />
+            <SettingSwitch label="仅自选币池" checked={draft.favoritePoolOnly} disabled={!canEdit} onChange={(value) => update('favoritePoolOnly', value)} />
+            <SettingSwitch label="强制 TA 复核" checked={Boolean(draft.forceTradingAgents)} disabled={!canEdit || draft.decisionEngine === 'skills'} onChange={(value) => update('forceTradingAgents', value)} />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+          <Button disabled={!canEdit} onClick={() => onSave(draft, enabled)}>
+            <Save className="h-4 w-4" />
+            保存设置
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function AccountSettingsDialog({
+  entry,
+  resetEquity,
+  disabled,
+  onOpenChange,
+  onResetEquityChange,
+  onReset,
+  onDelete,
+}: {
+  entry: AccountOverviewEntry | null
+  resetEquity: number
+  disabled: boolean
+  onOpenChange: (open: boolean) => void
+  onResetEquityChange: (value: number) => void
+  onReset: () => void
+  onDelete: () => void
+}) {
+  if (!entry) return null
+  const account = entry.account
+  const isTest = entry.source === 'test'
+  return (
+    <Dialog open={Boolean(entry)} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>账户设置 · {entry.label}</DialogTitle>
+          <DialogDescription>账户资料、测试账户维护和只读状态集中在这里。</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <MiniMetric label="账户 ID" value={entry.id} />
+          <MiniMetric label="账户类型" value={isTest ? '本地测试账户' : '真实账户只读'} />
+          <MiniMetric label="账户权益" value={account ? `$${formatMoney(account.totalEqUsd)}` : '--'} />
+          <MiniMetric label="可用资金" value={account ? `$${formatMoney(account.availableUsdt)}` : '--'} />
+          {isTest ? (
+            <label className="block text-sm font-medium text-foreground/75">
+              重置后初始资金 USDT
+              <Input
+                type="number"
+                min={1}
+                value={resetEquity}
+                className="mt-2 font-mono"
+                disabled={disabled}
+                onChange={(event) => onResetEquityChange(Number(event.target.value) || 0)}
+              />
+            </label>
+          ) : (
+            <p className="rounded-xl border border-border bg-card p-3 text-sm text-foreground/70">真实账户当前只读展示。接入真实交易 API 后，可在此扩展密钥权限、风险限额和自动化授权。</p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>关闭</Button>
+          {isTest && (
+            <>
+              <Button variant="outline" disabled={disabled || resetEquity <= 0} onClick={onReset}>
+                <RotateCcw className="h-4 w-4" />
+                重置
+              </Button>
+              <Button variant="destructive" disabled={disabled || entry.id === 'default' || Boolean(entry.automation?.enabled)} onClick={onDelete}>
+                <Trash2 className="h-4 w-4" />
+                删除
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function CreateAccountDialog({
+  open,
+  onOpenChange,
   label,
   equity,
   disabled,
@@ -300,6 +638,8 @@ function CreateAccountBox({
   onEquityChange,
   onCreate,
 }: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
   label: string
   equity: number
   disabled: boolean
@@ -308,297 +648,60 @@ function CreateAccountBox({
   onCreate: () => void
 }) {
   return (
-    <section className="rounded-md border border-primary/25 bg-primary/5 p-3">
-      <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-        <Plus className="h-4 w-4 text-primary" />
-        新增测试账号
-      </div>
-      <div className="space-y-2">
-        <label className="block text-[11px] text-muted-foreground">
-          账号名称
-          <Input value={label} maxLength={24} className="mt-1 h-8 text-xs" disabled={disabled} onChange={(event) => onLabelChange(event.target.value)} />
-        </label>
-        <label className="block text-[11px] text-muted-foreground">
-          初始资金 USDT
-          <Input
-            type="number"
-            min={1}
-            value={equity}
-            className="mt-1 h-8 font-mono text-xs"
-            disabled={disabled}
-            onChange={(event) => onEquityChange(Number(event.target.value) || 0)}
-          />
-        </label>
-        <Button size="sm" className="h-8 w-full text-xs" disabled={disabled || !label.trim() || equity <= 0} onClick={onCreate}>
-          <Plus className="h-3.5 w-3.5" />
-          创建测试账号
-        </Button>
-      </div>
-    </section>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>添加测试账户</DialogTitle>
+          <DialogDescription>测试账户只在本地计算盈亏和持仓，不会发送真实订单。</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <label className="block text-sm font-medium text-foreground/75">
+            账户名称
+            <Input value={label} maxLength={24} className="mt-2" disabled={disabled} onChange={(event) => onLabelChange(event.target.value)} />
+          </label>
+          <label className="block text-sm font-medium text-foreground/75">
+            初始资金 USDT
+            <Input type="number" min={1} value={equity} className="mt-2 font-mono" disabled={disabled} onChange={(event) => onEquityChange(Number(event.target.value) || 0)} />
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+          <Button disabled={disabled || !label.trim() || equity <= 0} onClick={onCreate}>
+            <Plus className="h-4 w-4" />
+            创建
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
-function AccountMetrics({ entry }: { entry: AccountOverviewEntry }) {
-  const account = entry.account!
+function CompactMetric({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-base font-semibold">{entry.label}</h2>
-          <p className="text-xs text-muted-foreground">{account.valuationNotice || '持仓使用真实市场价格在本地估值。'}</p>
-        </div>
-        <Badge variant="outline" className={cn(entry.source === 'test' ? 'border-warning text-warning' : 'border-gain text-gain')}>
-          {entry.source === 'test' ? '测试账户' : '真实只读'}
-        </Badge>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="账户权益" value={`$${formatMoney(account.totalEqUsd)}`} />
-        <MetricCard label="可用 USDT" value={`$${formatMoney(account.availableUsdt)}`} />
-        <MetricCard label="浮动盈亏" value={formatSignedMoney(account.totalUpl)} tone={account.totalUpl >= 0 ? 'text-gain' : 'text-loss'} />
-        <MetricCard label="收益率" value={`${account.uplRatio >= 0 ? '+' : ''}${account.uplRatio.toFixed(2)}%`} tone={account.uplRatio >= 0 ? 'text-gain' : 'text-loss'} />
-        <MetricCard label="占用保证金" value={`$${formatMoney(account.usedMargin)}`} />
-        <MetricCard label="保证金占比" value={`${account.marginUsagePct.toFixed(2)}%`} tone={account.marginUsagePct > 60 ? 'text-loss' : account.marginUsagePct > 35 ? 'text-warning' : ''} />
-        <MetricCard label="初始资金" value={account.initialEquityUsdt ? `$${formatMoney(account.initialEquityUsdt)}` : '--'} />
-        <MetricCard label="已实现盈亏" value={account.realizedPnl !== undefined ? formatSignedMoney(account.realizedPnl) : '--'} tone={(account.realizedPnl || 0) >= 0 ? 'text-gain' : 'text-loss'} />
-      </div>
+    <div className="min-w-0">
+      <p className="text-[11px] font-semibold leading-4 text-foreground/58">{label}</p>
+      <p className={cn('truncate font-mono text-sm font-semibold leading-5', tone)}>{value}</p>
     </div>
   )
 }
 
-function AccountSettings({
-  entry,
-  actionPending,
-  resetEquity,
-  onResetEquityChange,
-  onToggleAutomation,
-  onRunAutomation,
-  onResetAccount,
-  onDeleteAccount,
-}: {
-  entry: AccountOverviewEntry
-  actionPending: boolean
-  resetEquity: number
-  onResetEquityChange: (value: number) => void
-  onToggleAutomation: (enabled: boolean) => void
-  onRunAutomation: () => void
-  onResetAccount: () => void
-  onDeleteAccount: () => void
-}) {
-  const account = entry.account!
-  const isTest = entry.source === 'test'
-  const automation = entry.automation || null
+function TabButton({ active, children, onClick }: { active: boolean; children: ReactNode; onClick: () => void }) {
   return (
-    <section className="rounded-md border border-border bg-card/45 p-3">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Settings2 className="h-4 w-4 text-primary" />
-          <div>
-            <h3 className="text-sm font-medium">账户设置</h3>
-            <p className="text-[11px] text-muted-foreground">账户管理、自动化接管和测试账户维护集中在这里。</p>
-          </div>
-        </div>
-        <Badge variant="outline" className={cn(isTest ? 'border-warning text-warning' : 'border-gain text-gain')}>
-          {isTest ? '本地测试可写' : '真实账户只读'}
-        </Badge>
-      </div>
-
-      <div className="grid gap-2 md:grid-cols-4">
-        <MiniMetric label="账户 ID" value={entry.id} />
-        <MiniMetric label="估值来源" value={account.valuationSource || '--'} />
-        <MiniMetric label="可用资金" value={`$${formatMoney(account.availableUsdt)}`} />
-        <MiniMetric label="占用保证金" value={`$${formatMoney(account.usedMargin)}`} />
-      </div>
-
-      <Separator className="my-3" />
-
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="rounded-md border border-border bg-background/45 px-3 py-2">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-medium">AI 自动化接管</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                开启后默认管理当前持仓并补充主流币种观察池，自动操作仍按 30 秒节流执行。
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className={cn('text-[10px]', automation?.enabled ? 'border-gain text-gain' : 'border-muted-foreground text-muted-foreground')}>
-                {automation?.enabled ? '已开启' : '已关闭'}
-              </Badge>
-              <Switch checked={Boolean(automation?.enabled)} disabled={!isTest || actionPending} onCheckedChange={onToggleAutomation} />
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-            <span>上次运行：{automation?.lastRunAt ? formatTime(automation.lastRunAt) : '--'}</span>
-            <span>下次运行：{automation?.nextRunAt ? formatTime(automation.nextRunAt) : '--'}</span>
-            <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!isTest || actionPending || !automation?.enabled} onClick={onRunAutomation}>
-              <Play className="h-3.5 w-3.5" />
-              立即运行
-            </Button>
-          </div>
-        </div>
-
-        <div className="rounded-md border border-border bg-background/45 px-3 py-2">
-          <p className="mb-2 text-xs font-medium">测试账户维护</p>
-          {isTest ? (
-            <div className="space-y-2">
-              <label className="block text-[11px] text-muted-foreground">
-                重置后初始资金 USDT
-                <Input
-                  type="number"
-                  min={1}
-                  value={resetEquity}
-                  className="mt-1 h-8 font-mono text-xs"
-                  disabled={actionPending}
-                  onChange={(event) => onResetEquityChange(Number(event.target.value) || 0)}
-                />
-              </label>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="h-8 flex-1 text-xs" disabled={actionPending || resetEquity <= 0} onClick={onResetAccount}>
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  重置
-                </Button>
-                <Button size="sm" variant="outline" className="h-8 flex-1 text-xs text-loss" disabled={actionPending || entry.id === 'default' || Boolean(automation?.enabled)} onClick={onDeleteAccount}>
-                  <Trash2 className="h-3.5 w-3.5" />
-                  删除
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <p className="text-[11px] leading-relaxed text-muted-foreground">真实账户目前只读展示。接入真实交易 API 后，可在这里扩展密钥状态、权限、风险限额和自动化授权。</p>
-          )}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function PositionsBlock({ positions }: { positions: Position[] }) {
-  if (!positions.length) {
-    return <div className="rounded-md border border-border px-3 py-10 text-center text-xs text-muted-foreground">暂无持仓</div>
-  }
-  return (
-    <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full min-w-[1120px] text-xs">
-        <thead className="bg-muted/35 text-muted-foreground">
-          <tr>
-            <th className="px-3 py-2 text-left font-medium">品种</th>
-            <th className="px-3 py-2 text-right font-medium">持仓量</th>
-            <th className="px-3 py-2 text-right font-medium">标记价格</th>
-            <th className="px-3 py-2 text-right font-medium">开仓均价</th>
-            <th className="px-3 py-2 text-right font-medium">预估强平价</th>
-            <th className="px-3 py-2 text-right font-medium">盈亏平衡价</th>
-            <th className="px-3 py-2 text-right font-medium">浮动收益</th>
-            <th className="px-3 py-2 text-right font-medium">维持保证金率</th>
-            <th className="px-3 py-2 text-right font-medium">保证金</th>
-          </tr>
-        </thead>
-        <tbody>
-          {positions.map((position) => (
-            <tr key={position.id} className="border-t border-border/70 align-top">
-              <td className="px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{position.instId}</span>
-                  <Badge variant="outline" className={cn('text-[10px]', position.side === 'long' ? 'border-gain/60 text-gain' : 'border-loss/60 text-loss')}>
-                    {position.side === 'long' ? '多' : '空'} {position.leverage}x
-                  </Badge>
-                </div>
-                <div className="mt-1 text-[11px] text-muted-foreground">{position.type === 'spot' ? '现货' : '永续合约'} · {position.aiSuggestion || '暂无 AI 持仓建议'}</div>
-              </td>
-              <td className={cn('px-3 py-2 text-right font-mono', position.side === 'short' ? 'text-loss' : 'text-gain')}>
-                {formatPositionHolding(position)}
-              </td>
-              <td className="px-3 py-2 text-right font-mono">
-                ${formatPrice(position.markPrice)}
-              </td>
-              <td className="px-3 py-2 text-right font-mono">
-                ${formatPrice(position.entryPrice)}
-              </td>
-              <td className="px-3 py-2 text-right font-mono text-loss">
-                {position.liquidationPrice > 0 ? `$${formatPrice(position.liquidationPrice)}` : '--'}
-              </td>
-              <td className="px-3 py-2 text-right font-mono">
-                {position.breakEvenPrice > 0 ? `$${formatPrice(position.breakEvenPrice)}` : '--'}
-              </td>
-              <td className={cn('px-3 py-2 text-right font-mono', position.pnl >= 0 ? 'text-gain' : 'text-loss')}>
-                <div>{formatSignedMoney(position.pnl)}</div>
-                <div>{position.pnlPercent >= 0 ? '+' : ''}{position.pnlPercent.toFixed(2)}%</div>
-              </td>
-              <td className="px-3 py-2 text-right font-mono">
-                <div>{formatMarginRatio(position)}</div>
-                {position.maintenanceMarginRatePct ? (
-                  <div className="text-[11px] text-muted-foreground">MMR {position.maintenanceMarginRatePct.toFixed(2)}%</div>
-                ) : null}
-              </td>
-              <td className="px-3 py-2 text-right font-mono">
-                <div>{position.margin !== undefined ? `$${formatMoney(position.margin)}` : '--'}</div>
-                <div className="text-[11px] text-muted-foreground">{formatMarginMode(position.marginMode, position.type)}</div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function OperationRow({ record }: { record: AccountOperationRecord }) {
-  return (
-    <div className="rounded-md border border-border bg-background/55 p-3">
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <Badge variant="outline" className={cn('text-[10px]', sourceClass(record.source))}>
-              {record.source === 'ai' ? 'AI 操作' : record.source === 'manual' ? '手动' : '系统'}
-            </Badge>
-            {record.dryRun ? <Badge variant="outline" className="border-warning/60 text-warning">演练</Badge> : null}
-            <span className="truncate text-sm font-medium">{record.instId || eventLabel(record.event)}</span>
-          </div>
-          <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
-            <Clock3 className="h-3 w-3" />
-            {formatTime(record.ts)}
-          </p>
-        </div>
-        <Badge variant="outline" className={cn('shrink-0 text-[10px]', statusClass(record.status || ''))}>{statusText(record.status || '')}</Badge>
-      </div>
-      <div className="text-xs">
-        <span className={cn(record.action === 'add' || record.action === 'buy' ? 'text-gain' : record.action === 'close' || record.action === 'reduce' || record.action === 'sell' ? 'text-loss' : 'text-muted-foreground')}>
-          {record.operation || eventLabel(record.event)}
-        </span>
-        {record.reason ? <span className="ml-2 text-muted-foreground">{record.reason}</span> : null}
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-        <MiniMetric label="名义价值" value={record.notionalUsd !== null && record.notionalUsd !== undefined ? `$${formatMoney(record.notionalUsd)}` : '--'} />
-        <MiniMetric label="参考价格" value={record.referencePrice !== null && record.referencePrice !== undefined ? `$${formatPrice(record.referencePrice)}` : '--'} />
-        <MiniMetric label="手续费" value={record.executionFee !== null && record.executionFee !== undefined ? `$${formatMoney(record.executionFee)}` : '--'} />
-        <MiniMetric label="实现盈亏" value={record.realizedPnl !== null && record.realizedPnl !== undefined ? formatSignedMoney(record.realizedPnl) : '--'} tone={(record.realizedPnl || 0) >= 0 ? 'text-gain' : 'text-loss'} />
-      </div>
-    </div>
-  )
-}
-
-function PanelTitle({ icon, title, meta }: { icon: ReactNode; title: string; meta: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-      <div className="flex items-center gap-2 text-sm font-medium">{icon}{title}</div>
-      <span className="text-xs text-muted-foreground">{meta}</span>
-    </div>
+    <button
+      type="button"
+      className={cn('rounded-full border px-3 py-1 text-xs font-semibold transition', active ? 'border-gain/40 bg-gain/15 text-gain' : 'border-border bg-background/60 text-foreground/75 hover:text-foreground')}
+      onClick={onClick}
+    >
+      {children}
+    </button>
   )
 }
 
 function SummaryPill({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="rounded-md border border-border bg-card px-3 py-1.5 text-xs">
-      <span className="mr-2 text-muted-foreground">{label}</span>
-      <span className={cn('font-mono', tone)}>{value}</span>
-    </div>
-  )
-}
-
-function MetricCard({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="rounded-md border border-border bg-card/65 px-3 py-2">
-      <p className="text-[11px] text-muted-foreground">{label}</p>
-      <p className={cn('mt-1 font-mono text-sm font-medium', tone)}>{value}</p>
+    <div className="rounded-full border border-border bg-card px-3 py-1 text-xs shadow-[0_8px_18px_rgba(0,0,0,0.14)]">
+      <span className="mr-2 text-foreground/65">{label}</span>
+      <span className={cn('font-mono font-semibold', tone)}>{value}</span>
     </div>
   )
 }
@@ -606,23 +709,182 @@ function MetricCard({ label, value, tone = '' }: { label: string; value: string;
 function MiniMetric({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
   return (
     <div className="min-w-0">
-      <p className="text-muted-foreground">{label}</p>
-      <p className={cn('truncate font-mono', tone)}>{value}</p>
+      <p className="text-sm font-semibold text-foreground/70">{label}</p>
+      <p className={cn('truncate font-mono font-semibold', tone)}>{value}</p>
     </div>
   )
+}
+
+function useValueFlash(value: number) {
+  const previous = useRef(value)
+  const [flash, setFlash] = useState<'gain' | 'loss' | 'none'>('none')
+
+  useEffect(() => {
+    if (!Number.isFinite(value)) return
+    const diff = value - previous.current
+    previous.current = value
+    if (Math.abs(diff) < 0.000001) return
+    setFlash(diff > 0 ? 'gain' : 'loss')
+    const timer = window.setTimeout(() => setFlash('none'), 780)
+    return () => window.clearTimeout(timer)
+  }, [value])
+
+  return flash
+}
+
+function isTradeOperation(record: AccountOperationRecord) {
+  const action = String(record.action || '').toLowerCase()
+  const operation = String(record.operation || '')
+  const status = String(record.status || '').toLowerCase()
+  return ['add', 'reduce', 'close', 'buy', 'sell'].includes(action)
+    || status === 'applied-to-test-account'
+    || /开仓|加仓|减仓|平仓|买入|卖出|清仓/.test(operation)
+}
+
+function SettingInput({ label, value, disabled, onChange }: { label: string; value: number; disabled: boolean; onChange: (value: string) => void }) {
+  return (
+    <label className="block text-sm font-semibold text-foreground/75">
+      {label}
+      <Input type="number" value={Number.isFinite(value) ? value : 0} disabled={disabled} className="mt-2 font-mono" onChange={(event) => onChange(event.target.value)} />
+    </label>
+  )
+}
+
+function SettingSelect({ label, value, disabled, options, onChange }: { label: string; value: string; disabled: boolean; options: ReadonlyArray<readonly [string, string]>; onChange: (value: string) => void }) {
+  return (
+    <label className="block text-sm font-semibold text-foreground/75">
+      {label}
+      <Select value={value} disabled={disabled} onValueChange={onChange}>
+        <SelectTrigger className="mt-2 w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map(([optionValue, optionLabel]) => (
+            <SelectItem key={optionValue} value={optionValue}>{optionLabel}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </label>
+  )
+}
+
+function SettingSwitch({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label className="flex items-center justify-between gap-3 rounded-xl border border-border bg-background/55 px-3 py-2 text-sm font-semibold text-foreground/75">
+      <span>{label}</span>
+      <Switch checked={checked} disabled={disabled} onCheckedChange={(value) => onChange(Boolean(value))} />
+    </label>
+  )
+}
+
+function normalizeAiSettings(settings?: Partial<PlanSettings>, account?: AccountOverviewEntry['account']): PlanSettings {
+  const merged = { ...defaultPlanSettings, ...(settings || {}) }
+  const available = Number(account?.availableUsdt || 0)
+  const requestedBudget = Number(merged.budgetUsdt)
+  const autoBudget = merged.autoBudget !== false
+  const budgetUsdt = autoBudget
+    ? (available > 0 ? available : defaultPlanSettings.budgetUsdt)
+    : requestedBudget > 0
+      ? (available > 0 ? Math.min(requestedBudget, available) : requestedBudget)
+      : (available > 0 ? available : defaultPlanSettings.budgetUsdt)
+  const maxLeverage = snapUiLeverage(Number(merged.maxLeverage || defaultPlanSettings.maxLeverage || 5))
+  const minLeverage = Math.min(snapUiLeverage(Math.max(Number(merged.minLeverage || 5), 5)), maxLeverage)
+  const symbols = parseSymbolPool(String(merged.symbols || ''))
+  const legacySymbolPool = isLegacyDefaultSymbolPool(symbols)
+  const requestedProductPreference = ['both', 'spot', 'swap'].includes(String(merged.productPreference)) ? merged.productPreference : defaultPlanSettings.productPreference
+  const productPreference = legacySymbolPool && requestedProductPreference === 'both' ? 'swap' : requestedProductPreference
+
+  return {
+    ...merged,
+    autoBudget,
+    budgetUsdt: clampNumber(budgetUsdt, 0, 10_000_000),
+    lookbackDays: clampNumber(Number(merged.lookbackDays || 60), 30, 300),
+    objective: ['defensive', 'balanced', 'growth'].includes(String(merged.objective)) ? merged.objective : defaultPlanSettings.objective,
+    riskLevel: clampNumber(Number(merged.riskLevel || 5), 1, 10),
+    maxAssetWeight: clampNumber(Number(merged.maxAssetWeight || 35), 1, 90),
+    minOrderUsdt: clampNumber(Number(merged.minOrderUsdt || 10), 1, 1_000_000),
+    targetReturn: clampNumber(Number(merged.targetReturn || 12), 0.1, 1000),
+    maxDrawdown: clampNumber(Number(merged.maxDrawdown || 8), 0.1, 100),
+    minConfidence: clampNumber(Number(merged.minConfidence ?? 60), 0, 100),
+    productPreference,
+    favoritePoolOnly: Boolean(merged.favoritePoolOnly),
+    symbols: legacySymbolPool ? '' : symbols.join(','),
+    minLeverage,
+    maxLeverage,
+    manageExistingPositions: merged.manageExistingPositions !== false,
+    allowNewPositions: merged.allowNewPositions !== false,
+    allowPositionIncrease: merged.allowPositionIncrease !== false,
+    maxActionsPerCycle: clampNumber(Number(merged.maxActionsPerCycle || 6), 1, 12),
+    decisionEngine: ['skills', 'tradingagents', 'hybrid'].includes(String(merged.decisionEngine)) ? merged.decisionEngine : 'hybrid',
+    tradingAgentsWeight: clampNumber(Number(merged.tradingAgentsWeight ?? 50), 0, 100),
+    forceTradingAgents: Boolean(merged.forceTradingAgents),
+  }
+}
+
+function parseSymbolPool(value = '') {
+  return [...new Set(
+    String(value)
+      .split(/[\s,，、]+/)
+      .map((item) => item.trim().toUpperCase())
+      .filter((item) => /^[A-Z0-9]+-[A-Z0-9]+(?:-SWAP)?$/.test(item)),
+  )].slice(0, 30)
+}
+
+function isLegacyDefaultSymbolPool(symbols: string[]) {
+  if (symbols.length !== LEGACY_DEFAULT_SYMBOL_POOL.length) return false
+  const legacy = new Set(LEGACY_DEFAULT_SYMBOL_POOL)
+  return symbols.every((item) => legacy.has(item))
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min
+  return Math.min(Math.max(value, min), max)
+}
+
+function snapUiLeverage(value: number) {
+  const capped = clampNumber(value, 1, 50)
+  return OKX_LEVERAGE_OPTIONS.filter((tier) => tier <= capped).at(-1) || 1
+}
+
+function formatPositionSize(value: number) {
+  if (!Number.isFinite(value)) return '--'
+  if (value >= 1000) return value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  if (value >= 1) return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
+  return value.toFixed(8).replace(/0+$/, '').replace(/\.$/, '')
+}
+
+function formatPositionHolding(position: Position) {
+  const sign = position.side === 'short' ? '-' : '+'
+  const base = position.type === 'spot'
+    ? `${formatPositionSize(position.size)} ${position.symbol}`
+    : `${formatMoney(Math.abs(position.notionalUsd || 0))} USDT`
+  return `${sign}${base}`
+}
+
+function formatTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date)
 }
 
 function sourceClass(source: AccountOperationRecord['source']) {
   if (source === 'ai') return 'border-primary/60 bg-primary/10 text-primary'
   if (source === 'manual') return 'border-sky-400/50 bg-sky-400/10 text-sky-300'
-  return 'border-muted-foreground/40 bg-muted/30 text-muted-foreground'
+  return 'border-foreground/30 bg-muted/30 text-foreground/70'
 }
 
 function statusClass(status: string) {
   if (status.includes('applied') || status === 'completed') return 'border-gain/60 text-gain'
   if (status.includes('dry') || status.includes('held') || status.includes('skipped')) return 'border-warning/60 text-warning'
   if (status.includes('fail')) return 'border-loss/60 text-loss'
-  return 'border-muted-foreground/40 text-muted-foreground'
+  return 'border-foreground/30 text-foreground/70'
 }
 
 function statusText(status: string) {
@@ -650,48 +912,4 @@ function eventLabel(event: string) {
     test_positions_updated: '执行组合计划',
   }
   return labels[event] || event
-}
-
-function formatTime(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).format(date)
-}
-
-function formatPositionSize(value: number) {
-  if (!Number.isFinite(value)) return '--'
-  if (value >= 1000) return value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
-  if (value >= 1) return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
-  return value.toFixed(8).replace(/0+$/, '').replace(/\.$/, '')
-}
-
-function formatPositionHolding(position: Position) {
-  const sign = position.side === 'short' ? '-' : '+'
-  const base = position.type === 'spot'
-    ? `${formatPositionSize(position.size)} ${position.symbol}`
-    : `${formatMoney(Math.abs(position.notionalUsd || 0))} USDT`
-  return `${sign}${base}`
-}
-
-function formatMarginRatio(position: Position) {
-  if (position.type === 'spot') return '--'
-  const ratio = Number(position.maintenanceMarginRatioPct || 0)
-  if (!Number.isFinite(ratio) || ratio <= 0) return '--'
-  return `${ratio.toFixed(2)}%`
-}
-
-function formatMarginMode(value?: string, type?: Position['type']) {
-  if (type === 'spot') return '现货'
-  const mode = String(value || '').toLowerCase()
-  if (mode === 'cross') return '全仓'
-  if (mode === 'isolated') return '逐仓'
-  if (mode === 'cash') return '现货'
-  return value || '--'
 }

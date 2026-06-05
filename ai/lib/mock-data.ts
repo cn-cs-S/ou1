@@ -271,10 +271,12 @@ export interface AccountDetailSnapshot extends AccountsOverview {
 export interface AutomationState {
   enabled: boolean
   intervalSeconds: number
+  startDelaySeconds?: number
   intervalMinutes: number
   executionMode: 'analysis' | 'semi' | 'auto'
   dryRun: boolean
   accountId?: string
+  settings?: Partial<PlanSettings>
   running: boolean
   lastRunAt: string | null
   nextRunAt: string | null
@@ -292,6 +294,7 @@ export interface AutomationState {
 
 export interface PlanSettings {
   budgetUsdt: number
+  autoBudget?: boolean
   lookbackDays: number
   objective: 'defensive' | 'balanced' | 'growth'
   riskLevel: number
@@ -299,13 +302,86 @@ export interface PlanSettings {
   minOrderUsdt: number
   targetReturn: number
   maxDrawdown: number
+  minConfidence?: number
   excludeNewCoins: boolean
   productPreference: 'both' | 'spot' | 'swap'
   favoritePoolOnly: boolean
+  symbols?: string
+  symbolLimit?: number
+  minLeverage?: number
+  maxLeverage?: number
   manageExistingPositions: boolean
   allowNewPositions: boolean
   allowPositionIncrease: boolean
   maxActionsPerCycle: number
+  decisionEngine?: 'skills' | 'tradingagents' | 'hybrid'
+  tradingAgentsWeight?: number
+  forceTradingAgents?: boolean
+}
+
+export interface LlmConfig {
+  provider: 'openrouter' | 'zhipu'
+  model: string
+  baseUrl: string
+  enabled: boolean
+  temperature: number
+  maxTokens: number
+  fallbackModels?: string
+  thinkingType?: 'enabled' | 'disabled'
+  configured: boolean
+  keySource: 'env' | 'local' | 'missing'
+  maskedKey: string
+}
+
+export interface EngineDecision {
+  engine: 'skills' | 'tradingagents' | 'hybrid'
+  label: string
+  available: boolean
+  action: 'buy' | 'sell' | 'hold' | 'watch'
+  side: 'long' | 'short' | 'neutral'
+  product: 'spot' | 'swap' | 'both'
+  score: number
+  confidence: number
+  targetPct: number
+  allocationUsdt: number
+  takeProfit: number
+  stopLoss: number
+  veto: boolean
+  conflict?: boolean
+  summary: string
+  reasons: string[]
+  riskNotes: string[]
+  committee?: Record<string, string>
+  model?: string
+  provider?: string
+  latencyMs?: number
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+    cost?: number
+  } | null
+  weight?: {
+    skills: number
+    tradingAgents: number
+  }
+}
+
+export interface DecisionComparison {
+  generatedAt: string
+  instId: string
+  mode: 'skills' | 'tradingagents' | 'hybrid'
+  selected: EngineDecision
+  weight: {
+    skills: number
+    tradingAgents: number
+  }
+  engines: {
+    skills: EngineDecision
+    tradingAgents: EngineDecision
+    hybrid: EngineDecision
+  }
+  notes: string[]
 }
 
 export const initialAsset: CryptoAsset = {

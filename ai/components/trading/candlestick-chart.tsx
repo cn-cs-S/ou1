@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   createChart,
   CandlestickSeries,
@@ -29,6 +30,9 @@ interface CandlestickChartProps {
   isCollapsed: boolean
   onToggleCollapse: () => void
   marketSource?: string
+  defaultShowMA?: boolean
+  defaultShowBoll?: boolean
+  headerAction?: ReactNode
 }
 
 interface OHLCInfo {
@@ -61,6 +65,9 @@ export function CandlestickChart({
   isCollapsed,
   onToggleCollapse,
   marketSource,
+  defaultShowMA = true,
+  defaultShowBoll = false,
+  headerAction,
 }: CandlestickChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -70,8 +77,8 @@ export function CandlestickChart({
   const candlesRef = useRef<CandleData[]>(candles)
   const visibleRangeKeyRef = useRef('')
   const [ohlcInfo, setOhlcInfo] = useState<OHLCInfo | null>(null)
-  const [showMA, setShowMA] = useState(true)
-  const [showBoll, setShowBoll] = useState(false)
+  const [showMA, setShowMA] = useState(defaultShowMA)
+  const [showBoll, setShowBoll] = useState(defaultShowBoll)
 
   candlesRef.current = candles
 
@@ -235,6 +242,7 @@ export function CandlestickChart({
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {headerAction}
           <Button variant="ghost" size="icon" className="h-6 w-6" title="指标设置">
             <Settings2 className="h-3.5 w-3.5" />
           </Button>
