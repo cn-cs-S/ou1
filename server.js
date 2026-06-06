@@ -2840,7 +2840,9 @@ function writeModelRunLog(input = {}) {
   const existing = input.existing || readJsonFile(filePath, null);
   const now = new Date().toISOString();
   const samples = (Array.isArray(input.samples) ? input.samples : []).filter(Boolean).slice(-20_000);
-  const operations = trimModelOperations((Array.isArray(input.operations) ? input.operations : []).filter(Boolean));
+  const operations = classifyModelOperationSequence(
+    trimModelOperations((Array.isArray(input.operations) ? input.operations : []).filter(Boolean))
+  );
   const initialEquityUsdt = Number(input.initialEquityUsdt || existing?.initialEquityUsdt || samples[0]?.equity || 0);
   const log = {
     version: 1,
@@ -2906,7 +2908,8 @@ function buildModelTradeStats(operations = []) {
   const adds = applied.filter((item) => String(item.action || "").toLowerCase() === "add");
   const reduces = applied.filter((item) => String(item.action || "").toLowerCase() === "reduce");
   const closes = applied.filter((item) => ["close", "sell"].includes(String(item.action || "").toLowerCase()));
-  const closedWithPnl = closes.filter((item) => Number.isFinite(Number(item.realizedPnl)));
+  const closedWithPnl = applied.filter((item) => ["reduce", "close", "sell"].includes(String(item.action || "").toLowerCase())
+    && Number.isFinite(Number(item.realizedPnl)));
   const wins = closedWithPnl.filter((item) => Number(item.realizedPnl || 0) > 0).length;
   const totalFees = sum(applied.map((item) => Number(item.executionFee || 0)));
   const realizedPnl = sum(closedWithPnl.map((item) => Number(item.realizedPnl || 0)));
@@ -3010,9 +3013,9 @@ function formatTradeOperationLines(op = {}) {
     `数量: ${formatLogNumber(op.positionSize ?? op.contracts ?? op.sz)}`,
     `手续费: ${formatLogMoney(op.executionFee)} USDT`
   ];
-  if (Number.isFinite(Number(op.realizedPnl))) details.push(`实现盈亏: ${formatLogMoney(op.realizedPnl)} USDT`);
-  if (Number.isFinite(Number(op.realizedReturnPct))) details.push(`本次收益率: ${formatLogPct(op.realizedReturnPct)}`);
-  if (Number.isFinite(Number(op.equityBefore)) || Number.isFinite(Number(op.equityAfter))) {
+  if (hasFiniteLogNumber(op.realizedPnl)) details.push(`实现盈亏: ${formatLogMoney(op.realizedPnl)} USDT`);
+  if (hasFiniteLogNumber(op.realizedReturnPct)) details.push(`本次收益率: ${formatLogPct(op.realizedReturnPct)}`);
+  if (hasFiniteLogNumber(op.equityBefore) || hasFiniteLogNumber(op.equityAfter)) {
     details.push(`权益: ${formatLogMoney(op.equityBefore)} -> ${formatLogMoney(op.equityAfter)} USDT`);
   }
   return [
@@ -3020,6 +3023,10 @@ function formatTradeOperationLines(op = {}) {
     `  ${details.join(" | ")}`,
     `  原因: ${op.reason || op.operation || "--"}`
   ];
+}
+
+function hasFiniteLogNumber(value) {
+  return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
 }
 
 function countSkipReasons(operations = []) {
@@ -3141,29 +3148,117 @@ function returnWithinSamples(samples, durationMs, currentEquity) {
 }
 
 function normalizeModelOperations(actions = [], fallbackTs = new Date().toISOString(), accountId = "", accountLabel = "") {
-  return (actions || []).map((item) => ({
-    id: `${Date.parse(fallbackTs) || Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-    ts: fallbackTs,
+  return (actions || []).map((item) => normalizeModelOperation(item, fallbackTs, accountId, accountLabel));
+}
+
+function normalizeModelOperation(item = {}, fallbackTs = new Date().toISOString(), accountId = "", accountLabel = "") {
+  const adjustment = item.adjustment && typeof item.adjustment === "object" ? item.adjustment : {};
+  const position = adjustment.position && typeof adjustment.position === "object" ? adjustment.position : {};
+  const instId = item.instId || position.instId || "";
+  const instType = item.instType || position.instType || (String(instId || "").endsWith("-SWAP") ? "SWAP" : "SPOT");
+  const action = String(item.action || adjustment.action || item.side || "watch").toLowerCase();
+  const side = normalizeModelOperationSide(item.side || item.positionSide || item.posSide || position.posSide || item.operation || item.reason);
+  const leverage = firstFiniteNumber(item.leverage, item.lever, adjustment.leverage, position.lever);
+  const referencePrice = firstFiniteNumber(item.referencePrice, adjustment.referencePrice, position.avgPx, item.avgPx);
+  const feeRate = Math.max(firstFiniteNumber(item.feeRate, adjustment.feeRate, position.feeRate, 0) || 0, 0);
+  const executionFee = firstFiniteNumber(item.executionFee, adjustment.executionFee);
+  const ctVal = firstFiniteNumber(item.ctVal, adjustment.ctVal, position.ctVal, 1) || 1;
+  const notionalUsd = firstFiniteNumber(
+    item.notionalUsd,
+    adjustment.notionalUsd,
+    feeRate > 0 && Number.isFinite(executionFee) ? Math.abs(executionFee) / feeRate : NaN,
+    Number.isFinite(referencePrice) && Number.isFinite(position.pos) ? Math.abs(Number(position.pos) * referencePrice * ctVal) : NaN
+  );
+  const marginUsdt = firstFiniteNumber(
+    item.marginUsdt,
+    item.margin,
+    item.requiredCapitalUsdt,
+    adjustment.marginUsdt,
+    adjustment.requiredCapitalUsdt,
+    Number.isFinite(notionalUsd) && Number.isFinite(leverage) && leverage > 0 && instType === "SWAP" ? notionalUsd / leverage : NaN,
+    position.capital
+  );
+  const positionSize = firstFiniteNumber(
+    item.positionSize,
+    item.contracts,
+    item.sz,
+    adjustment.positionSize,
+    adjustment.contracts,
+    adjustment.sz,
+    Number.isFinite(notionalUsd) && Number.isFinite(referencePrice) && referencePrice > 0 ? notionalUsd / (referencePrice * ctVal) : NaN,
+    position.pos
+  );
+  const realizedPnl = firstFiniteNumber(item.realizedPnl, adjustment.realizedPnl);
+  const realizedReturnPct = firstFiniteNumber(
+    item.realizedReturnPct,
+    adjustment.realizedReturnPct,
+    Number.isFinite(realizedPnl) && Number.isFinite(marginUsdt) && marginUsdt > 0 ? realizedPnl / marginUsdt * 100 : NaN
+  );
+  return {
+    id: item.id || `${Date.parse(fallbackTs) || Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    ts: item.ts || fallbackTs,
     accountId,
     accountLabel,
-    instId: item.instId || "",
-    instType: item.instType || (String(item.instId || "").endsWith("-SWAP") ? "SWAP" : "SPOT"),
-    action: item.action || item.side || "watch",
-    side: item.side || item.positionSide || item.posSide || "",
+    instId,
+    instType,
+    action,
+    rawAction: item.rawAction || action,
+    side,
     operation: item.operation || "",
     status: item.status || "",
     reason: item.reason || "",
-    leverage: Number.isFinite(Number(item.leverage || item.lever)) ? Number(item.leverage || item.lever) : null,
-    marginUsdt: Number.isFinite(Number(item.marginUsdt || item.margin || item.requiredCapitalUsdt)) ? roundMoney(Number(item.marginUsdt || item.margin || item.requiredCapitalUsdt)) : null,
-    positionSize: Number.isFinite(Number(item.positionSize || item.contracts || item.sz)) ? Number(item.positionSize || item.contracts || item.sz) : null,
+    leverage: Number.isFinite(leverage) ? Number(leverage) : null,
+    marginUsdt: Number.isFinite(marginUsdt) ? roundMoney(Number(marginUsdt)) : null,
+    positionSize: Number.isFinite(positionSize) ? Number(positionSize) : null,
     equityBefore: Number.isFinite(Number(item.equityBefore)) ? roundMoney(Number(item.equityBefore)) : null,
     equityAfter: Number.isFinite(Number(item.equityAfter)) ? roundMoney(Number(item.equityAfter)) : null,
-    notionalUsd: Number.isFinite(Number(item.notionalUsd)) ? roundMoney(Number(item.notionalUsd)) : null,
-    referencePrice: Number.isFinite(Number(item.referencePrice)) ? Number(item.referencePrice) : null,
-    realizedPnl: Number.isFinite(Number(item.realizedPnl)) ? roundMoney(Number(item.realizedPnl)) : null,
-    realizedReturnPct: Number.isFinite(Number(item.realizedReturnPct)) ? roundMoney(Number(item.realizedReturnPct)) : null,
-    executionFee: Number.isFinite(Number(item.executionFee)) ? roundMoney(Number(item.executionFee)) : null
-  }));
+    notionalUsd: Number.isFinite(notionalUsd) ? roundMoney(Number(notionalUsd)) : null,
+    referencePrice: Number.isFinite(referencePrice) ? Number(referencePrice) : null,
+    realizedPnl: Number.isFinite(realizedPnl) ? roundMoney(Number(realizedPnl)) : null,
+    realizedReturnPct: Number.isFinite(realizedReturnPct) ? roundMoney(Number(realizedReturnPct)) : null,
+    executionFee: Number.isFinite(executionFee) ? roundMoney(Number(executionFee)) : null
+  };
+}
+
+function classifyModelOperationSequence(operations = []) {
+  const active = new Set();
+  return operations.map((operation) => {
+    const next = { ...operation };
+    const action = String(next.action || "").toLowerCase();
+    const status = String(next.status || "").toLowerCase();
+    if (!status.includes("applied")) return next;
+    const key = `${next.instId || ""}:${next.instType || ""}:${normalizeModelOperationSide(next.side || next.reason || next.operation) || "long"}`;
+    if (action === "add") {
+      next.action = active.has(key) ? "add" : "open";
+      active.add(key);
+    } else if (action === "buy") {
+      next.action = active.has(key) ? "add" : "open";
+      active.add(key);
+    } else if (action === "close" || action === "sell") {
+      next.action = "close";
+      active.delete(key);
+    } else if (action === "reduce") {
+      next.action = "reduce";
+      if (!active.has(key)) active.add(key);
+    }
+    return next;
+  });
+}
+
+function normalizeModelOperationSide(value) {
+  const text = String(value || "").toLowerCase();
+  if (text.includes("short") || text.includes("空")) return "short";
+  if (text.includes("long") || text.includes("多")) return "long";
+  if (text.includes("spot") || text.includes("现货")) return "spot";
+  return "";
+}
+
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return NaN;
 }
 
 function sanitizePathSegment(value) {
